@@ -1,0 +1,40 @@
+{
+  "name": "clm-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter api db:migrate",
+    "db:studio": "pnpm --filter api db:studio",
+    "db:seed": "pnpm --filter api db:seed",
+    "audit:features": "node scripts/feature-integrity/run.mjs",
+    "audit:features:json": "node scripts/feature-integrity/run.mjs --json",
+    "audit:features:probe": "node scripts/feature-integrity/run.mjs --only",
+    "audit:features:fast": "node scripts/feature-integrity/run.mjs --only P2,P4,P6,P8,P14,P16,P17,P18,P20,P21,P22,P2ui"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "axe-core": "^4.11.4",
+    "playwright": "^1.59.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "@xmldom/xmldom": ">=0.8.13",
+      "fast-xml-parser": ">=5.5.7",
+      "follow-redirects": ">=1.16.0",
+      "axios": ">=1.8.2",
+      "tar": ">=7.4.3",
+      "uuid": ">=14.0.0",
+      "brace-expansion": ">=2.0.3",
+      "pdfjs-dist": ">=4.2.67"
+    }
+  }
+}

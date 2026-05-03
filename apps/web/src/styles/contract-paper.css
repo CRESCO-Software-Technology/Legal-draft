@@ -1,0 +1,202 @@
+/*
+ * Contract paper typography — applied to TipTap's `.ProseMirror` surface
+ * only when inside `.document-canvas`. Scoped so it never leaks to the
+ * rest of the app.
+ *
+ * Goal: make the document FEEL like a legal contract on paper — serif
+ * type, generous leading, numbered sections, signature blocks — so the
+ * lawyer's instinct of "this is a document I can read and trust" kicks
+ * in even though it's rendered HTML.
+ *
+ * B.5.1 — first pass. Tunable without touching the component.
+ */
+
+.document-canvas .ProseMirror {
+  font-family: 'Times New Roman', 'Times', 'Georgia', serif;
+  font-size: 12pt;
+  line-height: 1.55;
+  color: #111827; /* gray-900 */
+  outline: none;
+  /* Prevent runaway width inside the page */
+  max-width: 100%;
+  /* Give the cursor somewhere to sit in empty editors */
+  min-height: 2rem;
+}
+
+/* Paragraph rhythm tuned for legal text density */
+.document-canvas .ProseMirror p {
+  margin: 0 0 0.9em 0;
+  text-align: justify;
+  hyphens: auto;
+}
+
+/* Headings — mirror common contract numbering weights without mimicking
+   Word's oversized defaults. */
+.document-canvas .ProseMirror h1 {
+  font-size: 16pt;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin: 2em 0 1.2em 0;
+}
+.document-canvas .ProseMirror h2 {
+  font-size: 13pt;
+  font-weight: 700;
+  margin: 1.8em 0 0.6em 0;
+}
+.document-canvas .ProseMirror h3 {
+  font-size: 12pt;
+  font-weight: 700;
+  margin: 1.4em 0 0.4em 0;
+}
+.document-canvas .ProseMirror h4 {
+  font-size: 12pt;
+  font-weight: 600;
+  margin: 1em 0 0.3em 0;
+}
+
+/* Lists — contracts use numbered lists heavily; keep indentation modest */
+.document-canvas .ProseMirror ol,
+.document-canvas .ProseMirror ul {
+  margin: 0.4em 0 0.9em 0;
+  padding-left: 1.75em;
+}
+.document-canvas .ProseMirror li {
+  margin-bottom: 0.3em;
+}
+.document-canvas .ProseMirror li > p {
+  margin: 0;
+}
+
+/* Tables — clean borders, tighter padding than web defaults */
+.document-canvas .ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 11pt;
+}
+.document-canvas .ProseMirror th,
+.document-canvas .ProseMirror td {
+  border: 1px solid #d1d5db;
+  padding: 0.45em 0.7em;
+  vertical-align: top;
+  text-align: left;
+}
+.document-canvas .ProseMirror th {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+/* Blockquotes — used for recitals, preambles */
+.document-canvas .ProseMirror blockquote {
+  margin: 1em 0;
+  padding-left: 1em;
+  border-left: 3px solid #d1d5db;
+  color: #4b5563;
+  font-style: italic;
+}
+
+/* Inline styles */
+.document-canvas .ProseMirror strong { font-weight: 700; }
+.document-canvas .ProseMirror em { font-style: italic; }
+.document-canvas .ProseMirror u { text-decoration: underline; }
+.document-canvas .ProseMirror s { text-decoration: line-through; }
+
+/* Horizontal rule — used for signature block dividers */
+.document-canvas .ProseMirror hr {
+  border: none;
+  border-top: 1px solid #d1d5db;
+  margin: 2em 0;
+}
+
+/* Links — subtle, not Web-loud */
+.document-canvas .ProseMirror a {
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* Empty-editor placeholder — from @tiptap/extension-placeholder */
+.document-canvas .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #9ca3af;
+  pointer-events: none;
+  height: 0;
+  font-style: italic;
+}
+
+/* Selection — contracts often get text-selected for comments/AI actions;
+   use a softer highlight than the browser default. */
+.document-canvas .ProseMirror ::selection {
+  background: rgba(59, 130, 246, 0.18); /* blue-500 @ 18% */
+}
+
+/* B.5.5 — Inline risk & deviation markers (RiskHighlights extension). */
+.document-canvas .risk-marker {
+  position: relative;
+}
+
+/* Red squiggle for risks in full mode */
+.document-canvas .risk-marker--risk.risk-marker--view-full {
+  text-decoration: underline wavy #dc2626; /* red-600 */
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+  background: rgba(220, 38, 38, 0.04);
+}
+/* Blue squiggle for deviations in full mode */
+.document-canvas .risk-marker--deviation.risk-marker--view-full {
+  text-decoration: underline wavy #2563eb; /* blue-600 */
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+  background: rgba(37, 99, 235, 0.04);
+}
+
+/* Summary mode — no inline underline; drop a dot in the margin */
+.document-canvas .risk-marker--view-summary::before {
+  content: '';
+  position: absolute;
+  left: -1em;
+  top: 0.5em;
+  width: 0.35em;
+  height: 0.35em;
+  border-radius: 9999px;
+}
+.document-canvas .risk-marker--risk.risk-marker--view-summary::before      { background: #dc2626; }
+.document-canvas .risk-marker--deviation.risk-marker--view-summary::before { background: #2563eb; }
+
+/* Hover cursor hint — both modes */
+.document-canvas .risk-marker--view-full,
+.document-canvas .risk-marker--view-summary {
+  cursor: pointer;
+}
+.document-canvas .risk-marker:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* B.5.17 a11y — keyboard focus ring on risk markers. */
+.document-canvas .risk-marker:focus-visible {
+  outline: 2px solid #2563eb;      /* blue-600 */
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/*
+  B.5.10 — Approver-mode tone shift.
+  When the viewer is the pending approver (docs/26 State 4), risk
+  markers recolor from red → amber. The signal changes meaning for this
+  persona: Legal flags blockers (red = "must fix"), but an Approver is
+  asked to weigh tradeoffs (amber = "heads up, decide"). Keeping the
+  same shape (wavy underline + margin dot) while softening the tone
+  communicates "this is the same information, presented for a decision-
+  maker context" rather than "something was downgraded."
+*/
+.document-canvas--tone-amber .risk-marker--risk.risk-marker--view-full {
+  text-decoration-color: #d97706; /* amber-600 */
+  background: rgba(217, 119, 6, 0.05);
+}
+.document-canvas--tone-amber .risk-marker--risk.risk-marker--view-summary::before {
+  background: #d97706;
+}

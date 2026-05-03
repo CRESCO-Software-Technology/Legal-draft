@@ -1,0 +1,460 @@
+/**
+ * ArtifactPane — the right-side panel of /agent that hosts assistant
+ * outputs richer than a paragraph (U.5.2 / doc 32 §5b + §5c).
+ *
+ * Five renderer types, all driven off the same Artifact discriminated
+ * union so the chat stream just emits one kind:
+ *
+ *   📄 Doc       — contract draft / summary / advice memo (TipTap-able)
+ *   📊 Table     — queue / search results / export (sortable, drill)
+ *   ⚖ Diff      — redline / version compare (uses existing DiffViewer)
+ *   📝 Form      — pre-filled create-X form with a Save button
+ *   🎯 Card      — decision strip with Approve/Reject/Sign + preview
+ *
+ * Action wiring: every artifact has an `actions` array. Clicking an
+ * action posts to the corresponding tool (`save_draft`, `send_for_
+ * review`, etc.) and surfaces a toast + closes the artifact when done.
+ *
+ * Keyboard:
+ *   Esc       — closes the artifact pane (chat takes the full width)
+ *   ⌘D       — toggles "details" panel inside the artifact (later)
+ */
+import { useState } from 'react'
+import { X, Download, ChevronDown, FileText, Table as TableIcon,
+         GitCompareArrows, ListChecks, FormInput, Loader2, Check, AlertCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+
+// ─── Artifact types ──────────────────────────────────────────────────
+
+export interface ArtifactAction {
+  id: string
+  label: string
+  variant?: 'primary' | 'secondary' | 'danger'
+  /** Tool name to invoke; the parent component does the actual call. */
+  tool?: string
+  /** When set, clicking opens this URL in the same tab (doesn't run a tool). */
+  href?: string
+  /** Free-form payload passed to the tool handler. */
+  args?: Record<string, unknown>
+}
+
+export interface DocArtifact {
+  kind: 'doc'
+  id: string
+  /**
+   * Stable content-based key. Two artifacts with the same dedupeKey
+   * are the same logical artifact (just regenerated) and the pane
+   * should replace, not append. P61 audit (2026-05-02): without this,
+   * a tool that fires twice in a turn produced two near-identical
+   * cards in the right pane.
+   */
+  dedupeKey?: string
+  title: string
+  subtitle?: string
+  /** Sanitized HTML rendered with prose styles. */
+  html: string
+  actions?: ArtifactAction[]
+  /** Optional source citations to pin under the doc body. */
+  citations?: Array<{ label: string; href?: string }>
+}
+
+export interface TableArtifact<Row = Record<string, unknown>> {
+  kind: 'table'
+  id: string
+  dedupeKey?: string
+  title: string
+  subtitle?: string
+  columns: Array<{ key: string; label: string; align?: 'left' | 'right'; format?: 'text' | 'number' | 'currency' | 'date' | 'pill' }>
+  rows: Row[]
+  actions?: ArtifactAction[]
+  /** When a row is clicked, navigate to this URL with `:id` substituted. */
+  rowHref?: string
+}
+
+export interface DiffArtifact {
+  kind: 'diff'
+  id: string
+  dedupeKey?: string
+  title: string
+  subtitle?: string
+  /** v1 + v2 plain-text bodies; the renderer computes a unified diff. */
+  before: string
+  after: string
+  actions?: ArtifactAction[]
+}
+
+export interface FormArtifact {
+  kind: 'form'
+  id: string
+  dedupeKey?: string
+  title: string
+  subtitle?: string
+  fields: Array<{ key: string; label: string; type: 'text' | 'email' | 'number' | 'select' | 'textarea'; defaultValue?: string; required?: boolean; options?: Array<{ label: string; value: string }> }>
+  /** Tool name to call when the user submits; the form's values become args. */
+  submitTool: string
+  actions?: ArtifactAction[]
+}
+
+export interface CardArtifact {
+  kind: 'card'
+  id: string
+  dedupeKey?: string
+  title: string
+  subtitle?: string
+  /** Headline metric / recommendation. */
+  headline: string
+  /** Supporting bullets shown beneath the headline. */
+  details?: string[]
+  /** Big-button decision actions — Approve / Reject / Sign / etc. */
+  actions: ArtifactAction[]
+}
+
+export type Artifact = DocArtifact | TableArtifact | DiffArtifact | FormArtifact | CardArtifact
+
+// ─── Pane shell ──────────────────────────────────────────────────────
+
+export function ArtifactPane({
+  artifact,
+  onClose,
+  onAction,
+}: {
+  artifact: Artifact
+  onClose: () => void
+  /** Invoked when an action button is clicked. Parent runs the tool /
+   *  navigation; we just show a pending state until done. */
+  onAction: (action: ArtifactAction, artifact: Artifact) => Promise<void> | void
+}) {
+  return (
+    <aside
+      data-testid="artifact-pane"
+      data-artifact-kind={artifact.kind}
+      data-artifact-id={artifact.id}
+      className="flex-1 flex flex-col min-w-0 bg-gray-50 border-l border-gray-200"
+    >
+      <ArtifactHeader artifact={artifact} onClose={onClose} />
+      <div className="flex-1 overflow-y-auto p-6">
+        {artifact.kind === 'doc'   && <DocBody   artifact={artifact} />}
+        {artifact.kind === 'table' && <TableBody artifact={artifact} />}
+        {artifact.kind === 'diff'  && <DiffBody  artifact={artifact} />}
+        {artifact.kind === 'form'  && <FormBody  artifact={artifact} onAction={onAction} />}
+        {artifact.kind === 'card'  && <CardBody  artifact={artifact} onAction={onAction} />}
+      </div>
+      {/* Action bar — bottom of pane. Form + Card render their own
+          inline buttons; doc/table/diff use the shared bar. */}
+      {(artifact.kind === 'doc' || artifact.kind === 'table' || artifact.kind === 'diff')
+        && (artifact.actions ?? []).length > 0 && (
+        <div className="bg-white border-t border-gray-200 px-5 py-3 flex items-center gap-2 flex-wrap">
+          {(artifact.actions ?? []).map(a => (
+            <ActionButton key={a.id} action={a} onAction={a => onAction(a, artifact)} />
+          ))}
+        </div>
+      )}
+    </aside>
+  )
+}
+
+function ArtifactHeader({ artifact, onClose }: { artifact: Artifact; onClose: () => void }) {
+  const Icon =
+    artifact.kind === 'doc'   ? FileText :
+    artifact.kind === 'table' ? TableIcon :
+    artifact.kind === 'diff'  ? GitCompareArrows :
+    artifact.kind === 'form'  ? FormInput :
+                                ListChecks
+  return (
+    <div className="h-14 flex items-center px-5 bg-white border-b border-gray-200 gap-3 shrink-0">
+      <div className="h-7 w-7 rounded-md bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
+        <Icon className="h-3.5 w-3.5 text-indigo-600" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-semibold text-gray-900 truncate" data-testid="artifact-title">
+          {artifact.title}
+        </div>
+        {artifact.subtitle && (
+          <div className="text-[11px] text-gray-500 truncate">{artifact.subtitle}</div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        title="Close artifact (Esc)"
+        data-testid="artifact-close"
+        className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-50"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
+// ─── Renderers ───────────────────────────────────────────────────────
+
+function DocBody({ artifact }: { artifact: DocArtifact }) {
+  return (
+    <div className="max-w-3xl mx-auto bg-white border border-gray-200 rounded-xl shadow-sm">
+      <div
+        className="p-10 prose prose-sm max-w-none prose-headings:font-bold prose-headings:text-gray-900"
+        // Doc HTML is already sanitized by the agent; we trust it like
+        // the existing TipTap renderer does on contract pages.
+        dangerouslySetInnerHTML={{ __html: artifact.html }}
+      />
+      {artifact.citations && artifact.citations.length > 0 && (
+        <div className="px-10 pb-6 pt-2 border-t border-gray-100 mt-4">
+          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-2">Sources</p>
+          <ul className="space-y-1">
+            {artifact.citations.map((c, i) => (
+              <li key={i} className="text-[12px] text-gray-600">
+                {c.href ? (
+                  <a href={c.href} className="hover:underline text-indigo-700">{c.label}</a>
+                ) : c.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatCell(v: unknown, format?: string): string {
+  if (v === null || v === undefined) return '—'
+  if (format === 'currency' && typeof v === 'number') {
+    if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`
+    if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}K`
+    return `$${v.toLocaleString()}`
+  }
+  if (format === 'date' && typeof v === 'string') {
+    const d = new Date(v); return isNaN(d.getTime()) ? v : d.toLocaleDateString()
+  }
+  if (format === 'number' && typeof v === 'number') return v.toLocaleString()
+  return String(v)
+}
+
+function TableBody({ artifact }: { artifact: TableArtifact }) {
+  return (
+    <div className="max-w-5xl mx-auto bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              {artifact.columns.map(c => (
+                <th
+                  key={c.key}
+                  className={cn(
+                    'px-4 py-2.5 font-semibold text-gray-700 text-[11px] uppercase tracking-wider',
+                    c.align === 'right' ? 'text-right' : 'text-left',
+                  )}
+                >
+                  {c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {artifact.rows.length === 0 ? (
+              <tr>
+                <td colSpan={artifact.columns.length} className="px-4 py-12 text-center text-gray-400 text-[12px]">
+                  No rows.
+                </td>
+              </tr>
+            ) : (
+              artifact.rows.map((row, i) => {
+                const href = artifact.rowHref
+                  ? artifact.rowHref.replace(':id', String((row as Record<string, unknown>).id ?? ''))
+                  : undefined
+                const Cell = href ? 'a' : 'div'
+                return (
+                  <tr key={i} className={href ? 'hover:bg-indigo-50/40 cursor-pointer' : ''}>
+                    {artifact.columns.map(c => (
+                      <td
+                        key={c.key}
+                        className={cn(
+                          'px-4 py-2.5 text-gray-700',
+                          c.align === 'right' ? 'text-right tabular-nums' : '',
+                        )}
+                      >
+                        <Cell {...(href ? { href } : {})}>
+                          {formatCell((row as Record<string, unknown>)[c.key], c.format)}
+                        </Cell>
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 py-2 border-t border-gray-100 text-[11px] text-gray-500 flex items-center justify-between">
+        <span>{artifact.rows.length} {artifact.rows.length === 1 ? 'row' : 'rows'}</span>
+      </div>
+    </div>
+  )
+}
+
+function DiffBody({ artifact }: { artifact: DiffArtifact }) {
+  // Simple line-by-line diff. For richer markup, swap in DiffViewer
+  // (already in apps/web/src/components/contracts/DiffViewer.tsx).
+  const beforeLines = artifact.before.split('\n')
+  const afterLines = artifact.after.split('\n')
+  const max = Math.max(beforeLines.length, afterLines.length)
+  return (
+    <div className="max-w-5xl mx-auto bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="grid grid-cols-2 text-[12px] font-mono">
+        <div className="border-r border-gray-200">
+          <div className="px-3 py-1.5 bg-red-50 text-red-700 text-[10px] font-semibold uppercase tracking-wider border-b border-red-200">Before</div>
+          <pre className="p-3 whitespace-pre-wrap text-gray-700 leading-relaxed">
+            {beforeLines.slice(0, max).map((l, i) => (
+              <div key={i} className={l !== afterLines[i] ? 'bg-red-50' : ''}>{l || ' '}</div>
+            ))}
+          </pre>
+        </div>
+        <div>
+          <div className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-[10px] font-semibold uppercase tracking-wider border-b border-emerald-200">After</div>
+          <pre className="p-3 whitespace-pre-wrap text-gray-700 leading-relaxed">
+            {afterLines.slice(0, max).map((l, i) => (
+              <div key={i} className={l !== beforeLines[i] ? 'bg-emerald-50' : ''}>{l || ' '}</div>
+            ))}
+          </pre>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FormBody({ artifact, onAction }: { artifact: FormArtifact; onAction: (a: ArtifactAction, art: Artifact) => Promise<void> | void }) {
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {}
+    for (const f of artifact.fields) init[f.key] = f.defaultValue ?? ''
+    return init
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async () => {
+    setSubmitting(true)
+    try {
+      await onAction({ id: 'submit', label: 'Submit', tool: artifact.submitTool, args: values, variant: 'primary' }, artifact)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return (
+    <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-sm">
+      <div className="p-6 space-y-4">
+        {artifact.fields.map(f => (
+          <div key={f.key}>
+            <label className="block text-[11.5px] font-medium text-gray-700 mb-1">
+              {f.label}{f.required && <span className="text-red-400 ml-0.5">*</span>}
+            </label>
+            {f.type === 'textarea' ? (
+              <textarea
+                value={values[f.key]}
+                onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
+                rows={4}
+                className="w-full text-[13px] border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+              />
+            ) : f.type === 'select' ? (
+              <select
+                value={values[f.key]}
+                onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
+                className="w-full h-9 text-[13px] border border-gray-200 rounded-md px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+              >
+                {(f.options ?? []).map(o => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              </select>
+            ) : (
+              <input
+                type={f.type}
+                value={values[f.key]}
+                onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
+                className="w-full h-9 text-[13px] border border-gray-200 rounded-md px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="bg-gray-50 border-t border-gray-200 px-5 py-3 flex items-center justify-end gap-2">
+        <Button
+          onClick={submit}
+          disabled={submitting}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white"
+          data-testid="artifact-form-submit"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+          Save
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function CardBody({ artifact, onAction }: { artifact: CardArtifact; onAction: (a: ArtifactAction, art: Artifact) => Promise<void> | void }) {
+  return (
+    <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-sm">
+      <div className="p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">{artifact.headline}</h2>
+        {artifact.details && artifact.details.length > 0 && (
+          <ul className="mt-3 space-y-1.5 text-[13px] text-gray-700 list-disc pl-5">
+            {artifact.details.map((d, i) => <li key={i}>{d}</li>)}
+          </ul>
+        )}
+      </div>
+      <div className="bg-gray-50 border-t border-gray-200 px-5 py-3 flex items-center gap-2 flex-wrap">
+        {artifact.actions.map(a => (
+          <ActionButton key={a.id} action={a} onAction={a => onAction(a, artifact)} large />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Action button ───────────────────────────────────────────────────
+
+function ActionButton({
+  action, onAction, large,
+}: {
+  action: ArtifactAction
+  onAction: (a: ArtifactAction) => Promise<void> | void
+  large?: boolean
+}) {
+  const [state, setState] = useState<'idle' | 'pending' | 'ok' | 'error'>('idle')
+  const click = async () => {
+    if (state === 'pending') return
+    if (action.href) {
+      window.location.href = action.href
+      return
+    }
+    setState('pending')
+    try {
+      await onAction(action)
+      setState('ok')
+      setTimeout(() => setState('idle'), 1200)
+    } catch {
+      setState('error')
+      setTimeout(() => setState('idle'), 2500)
+    }
+  }
+  const variantCls =
+    action.variant === 'primary'  ? 'bg-indigo-600 hover:bg-indigo-700 text-white' :
+    action.variant === 'danger'   ? 'bg-red-600 hover:bg-red-700 text-white' :
+                                    'bg-white border border-gray-200 hover:bg-gray-50 text-gray-700'
+  return (
+    <button
+      type="button"
+      onClick={click}
+      disabled={state === 'pending'}
+      data-testid={`artifact-action-${action.id}`}
+      data-state={state}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg font-medium text-[13px] transition-colors disabled:opacity-60',
+        large ? 'px-5 py-2.5' : 'px-4 py-2',
+        variantCls,
+      )}
+    >
+      {state === 'pending' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+      {state === 'ok'      && <Check    className="h-3.5 w-3.5" />}
+      {state === 'error'   && <AlertCircle className="h-3.5 w-3.5" />}
+      {state === 'idle' && action.id === 'export' && <Download className="h-3.5 w-3.5" />}
+      <span>{action.label}</span>
+      {action.id === 'send' && state === 'idle' && <ChevronDown className="h-3 w-3" />}
+    </button>
+  )
+}

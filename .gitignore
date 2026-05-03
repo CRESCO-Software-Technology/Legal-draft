@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment (keep tracked templates)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Prisma
+apps/api/prisma/migrations/*.lock
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Turbo
+.turbo/
+
+# TypeScript / lint caches
+*.tsbuildinfo
+.eslintcache
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+
+# Claude Code: ship shared skills + launch config; never commit worktrees or local permissions
+.claude/worktrees/
+.claude/settings.local.json
+
+# Scripts: QA / audit / persona run output (large images; regenerate locally)
+scripts/screenshots/
+scripts/audit-screenshots/
+scripts/persona-tests/output/

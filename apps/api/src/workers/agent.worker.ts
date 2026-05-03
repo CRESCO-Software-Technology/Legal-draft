@@ -1,0 +1,509 @@
+/**
+ * Agent Worker — handles agentQueue jobs:
+ *   detect-binder    : LLM binder detection (Haiku, first 10K chars) → BINDER_DETECTED or classify-document
+ *   classify-document: LLM contract type classification (Haiku, first 5K chars) → extract-ai
+ *   extract-ai       : fetch custom field defs + call agents /review with full payload
+ *   classify-request : LLM intake classification (Haiku, 3K chars) → stores in request.metadata
+ *   approval-summary : Phase 06 — AI executive summary for approvers (LangGraph 3-step pipeline)
+ */
+import { Worker } from 'bullmq'
+import { redis } from '../lib/redis.js'
+import { prisma } from '../lib/prisma.js'
+import { queueClassifyDocument, queueExtractAi, queueSplitBinder } from '../lib/queue.js'
+import type { DetectBinderJob, ClassifyDocumentJob, ExtractAiJob, ClassifyRequestJob, SplitBinderJob, RedlineAnalysisJob, ApprovalSummaryJob } from '../lib/queue.js'
+import { createAuditEvent } from '../lib/audit.js'
+import { AuditAction } from '@clm/types'
+
+const AGENTS_URL = process.env.AGENTS_URL ?? 'http://localhost:8000'
+
+// ─── detect-binder ────────────────────────────────────────────────────────────
+
+async function handleDetectBinder(data: DetectBinderJob): Promise<void> {
+  const { contractId, versionId, orgId } = data
+  console.info('[agent-worker] detect-binder start contractId=%s', contractId)
+
+  // P2.3 — don't re-run binder detection on a contract that was itself
+  // carved from a binder. Otherwise each child's plainText (which
+  // starts with "MUTUAL NDA" / "MSA" headers) looks like a binder to
+  // the LLM and we recurse forever.
+  const contractMeta = await prisma.contract.findUnique({
+    where: { id: contractId },
+    select: { parentContractId: true, relationshipType: true },
+  })
+  if (contractMeta?.parentContractId || contractMeta?.relationshipType === 'exhibit_only') {
+    console.info(
+      '[agent-worker] detect-binder: skipping %s (already a split child: parent=%s, rel=%s)',
+      contractId, contractMeta.parentContractId, contractMeta.relationshipType,
+    )
+    // Still move the child along the pipeline — queue the classifier.
+    await prisma.contract.update({
+      where: { id: contractId },
+      data:  { analysisStatus: 'CLASSIFYING' },
+    })
+    queueClassifyDocument({ contractId, versionId, orgId })
+    return
+  }
+
+  const version = await prisma.contractVersion.findUnique({
+    where: { id: versionId },
+    select: { plainText: true },
+  })
+  if (!version?.plainText) {
+    // Stale job from a previous run — a fresh parse job will re-queue detect-binder. Skip silently.
+    console.warn('[agent-worker] detect-binder: plainText not yet ready for versionId=%s, skipping stale job', versionId)
+    return
+  }
+
+  const res = await fetch(`${AGENTS_URL}/detect-binder`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ plainText: version.plainText }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /detect-binder returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const result = await res.json() as {
+    isBinder: boolean; confidence: number
+    documents: Array<{ title: string; docType: string; charStart?: number; pageHint?: string }>
+  }
+  console.info('[agent-worker] detect-binder result contractId=%s isBinder=%s confidence=%.2f',
+    contractId, result.isBinder, result.confidence)
+
+  if (result.isBinder && result.confidence >= 0.7) {
+    // Fetch existing metadata (_totalPages stored by parse worker)
+    const contract = await prisma.contract.findUnique({
+      where: { id: contractId },
+      select: { metadata: true },
+    })
+    const existingMeta = (contract?.metadata as Record<string, unknown>) ?? {}
+    const totalPages = (existingMeta._totalPages as number) ?? 100  // fallback if not PDF
+
+    // Compute concrete page ranges from LLM pageHint strings ("~page N")
+    const splits = docsToSplitSpecs(result.documents, totalPages)
+
+    const metadata = {
+      ...existingMeta,
+      _binderDetected: true,
+      _suggestedSplits: splits,
+      _autoSplit: true,
+    }
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: { metadata, analysisStatus: 'SPLITTING' },
+    })
+
+    // Auto-split immediately — user can correct after. P2.3 fix: use
+    // the parent's real ownerId; 'system' isn't a valid FK target on
+    // Contract.ownerId so the child .create() was silently failing.
+    const parent = await prisma.contract.findUnique({
+      where: { id: contractId },
+      select: { ownerId: true },
+    })
+    const userId = parent?.ownerId ?? ''
+    if (!userId) {
+      console.error('[agent-worker] detect-binder: no ownerId for contractId=%s; skipping split', contractId)
+      return
+    }
+    queueSplitBinder({ contractId, orgId, userId, splits })
+    console.info('[agent-worker] detect-binder: auto-splitting contractId=%s splits=%d owner=%s',
+      contractId, splits.length, userId)
+  } else {
+    // Not a binder — proceed to classification
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: { analysisStatus: 'CLASSIFYING' },
+    })
+    queueClassifyDocument({ contractId, versionId, orgId })
+  }
+}
+
+// Convert LLM pageHint strings ("~page N") to concrete {pageStart,
+// pageEnd} ranges. Resilient to an LLM that hands us bad hints:
+//   • "~page 1" for all 3 docs (all same) → distribute evenly
+//   • "~page 5" on a 2-page PDF (out of range) → clamp + distribute
+//   • missing hints → index-proportional default
+// If after parsing we end up with <2 unique page starts but docs.length >= 2,
+// we FALL BACK to even distribution across the PDF.
+function docsToSplitSpecs(
+  docs: Array<{ title: string; docType: string; charStart?: number; pageHint?: string }>,
+  totalPages: number
+): SplitBinderJob['splits'] {
+  if (docs.length === 0) return []
+  const evenShare = Math.max(1, Math.floor(totalPages / docs.length))
+
+  let withPages = docs.map((doc, i) => {
+    const match = doc.pageHint?.match(/\d+/)
+    const rawPage = match ? parseInt(match[0], 10) : NaN
+    // Valid if within [1, totalPages]
+    const pageNum = Number.isFinite(rawPage) && rawPage >= 1 && rawPage <= totalPages
+      ? rawPage
+      : i * evenShare + 1
+    return { ...doc, pageNum }
+  })
+
+  // Sort by LLM-suggested start (usable when hints vary).
+  withPages.sort((a, b) => a.pageNum - b.pageNum)
+
+  // Collapsed starts? Example: LLM gave pageHint="~page 1" for every
+  // agreement → all pageNums equal. Detect + re-distribute so we
+  // actually carve N pieces.
+  const uniqueStarts = new Set(withPages.map(w => w.pageNum))
+  if (uniqueStarts.size < withPages.length && withPages.length >= 2) {
+    console.warn(
+      '[agent-worker] docsToSplitSpecs: %d unique starts for %d docs — redistributing evenly',
+      uniqueStarts.size, withPages.length,
+    )
+    // Preserve the original order from the LLM (insertion order) for
+    // the title sequence, then space them across totalPages.
+    withPages = docs.map((doc, i) => ({
+      ...doc,
+      pageNum: Math.min(totalPages, i * evenShare + 1),
+    }))
+  }
+
+  return withPages.map((doc, i) => {
+    const nextStart = i < withPages.length - 1 ? withPages[i + 1].pageNum : totalPages + 1
+    const pageEnd   = Math.max(doc.pageNum, nextStart - 1)
+    return {
+      title:     doc.title,
+      type:      doc.docType,
+      pageStart: doc.pageNum,
+      pageEnd,
+    }
+  })
+}
+
+// ─── classify-document ────────────────────────────────────────────────────────
+
+async function handleClassifyDocument(data: ClassifyDocumentJob): Promise<void> {
+  const { contractId, versionId, orgId, contractType: knownType } = data
+  console.info('[agent-worker] classify-document start contractId=%s', contractId)
+
+  const version = await prisma.contractVersion.findUnique({
+    where: { id: versionId },
+    select: { plainText: true },
+  })
+  if (!version?.plainText) {
+    // Stale job from a previous run — a fresh parse/classify job will re-queue this. Skip silently.
+    console.warn('[agent-worker] classify-document: plainText not yet ready for versionId=%s, skipping stale job', versionId)
+    return
+  }
+
+  const res = await fetch(`${AGENTS_URL}/classify`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ plainText: version.plainText }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /classify returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const result = await res.json() as { contractType: string; confidence: number; reason: string }
+  const resolvedType = knownType ?? result.contractType
+  console.info('[agent-worker] classify-document contractId=%s type=%s confidence=%.2f',
+    contractId, resolvedType, result.confidence)
+
+  await prisma.contract.update({
+    where: { id: contractId },
+    data: {
+      type:           resolvedType,
+      analysisStatus: 'EXTRACTING',
+    },
+  })
+
+  queueExtractAi({ contractId, versionId, orgId, contractType: resolvedType, triggeredBy: 'upload' })
+}
+
+// ─── extract-ai ───────────────────────────────────────────────────────────────
+
+async function handleExtractAi(data: ExtractAiJob): Promise<void> {
+  const { contractId, versionId, orgId, contractType, triggeredBy } = data
+
+  console.info('[agent-worker] extract-ai start contractId=%s triggeredBy=%s', contractId, triggeredBy)
+
+  // Fetch full plain text from DB (written by parse worker)
+  const version = await prisma.contractVersion.findUnique({
+    where: { id: versionId },
+    select: { plainText: true },
+  })
+
+  if (!version?.plainText) {
+    throw new Error(`No plainText for versionId=${versionId} — parse worker may not have finished`)
+  }
+
+  // Fetch org custom field definitions (global + type-scoped) + org name.
+  // orgName is passed to the agents service so the counterparty picker can
+  // filter out parties whose name matches the user's own org — without this
+  // the extractor picks "us" as counterparty in ~40% of contracts because
+  // both parties have a name and the model has no context for which one is
+  // the user. (Wave E.3)
+  const [customFields, org] = await Promise.all([
+    prisma.contractFieldDefinition.findMany({
+      where: {
+        orgId,
+        deletedAt: null,
+        OR: [
+          { contractType: contractType ?? null },
+          { contractType: null },   // global fields apply to all types
+        ],
+      },
+      orderBy: { sortOrder: 'asc' },
+      select: { fieldKey: true, fieldLabel: true, fieldType: true, options: true, helpText: true },
+    }),
+    prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { name: true },
+    }),
+  ])
+
+  console.info('[agent-worker] found %d custom fields for orgId=%s contractType=%s',
+    customFields.length, orgId, contractType ?? 'any')
+
+  // Call agents service
+  const body = {
+    contractId,
+    versionId,
+    orgId,
+    orgName:       org?.name,
+    contractType:  contractType ?? undefined,
+    customFields:  customFields.map(f => ({
+      fieldKey:   f.fieldKey,
+      fieldLabel: f.fieldLabel,
+      fieldType:  f.fieldType,
+      options:    (f.options as string[]) ?? [],
+      helpText:   f.helpText ?? undefined,
+    })),
+    plainText: version.plainText,
+  }
+
+  const res = await fetch(`${AGENTS_URL}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /review returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  console.info('[agent-worker] extract-ai queued in agents service contractId=%s', contractId)
+}
+
+// ─── classify-request ────────────────────────────────────────────────────────
+
+async function handleClassifyRequest(data: ClassifyRequestJob): Promise<void> {
+  const { requestId } = data
+  console.info('[agent-worker] classify-request start requestId=%s', requestId)
+
+  const request = await prisma.contractRequest.findUnique({
+    where: { id: requestId },
+    select: { title: true, description: true, counterpartyName: true },
+  })
+  if (!request) throw new Error(`Request not found: ${requestId}`)
+
+  const res = await fetch(`${AGENTS_URL}/intake-classify`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      title:           request.title,
+      description:     request.description,
+      counterpartyName: request.counterpartyName ?? undefined,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /intake-classify returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const result = await res.json() as {
+    contractType: string; suggestedPriority: string
+    extractedTerms: Record<string, unknown>; confidence: number; reason: string
+  }
+  console.info('[agent-worker] classify-request requestId=%s type=%s confidence=%.2f',
+    requestId, result.contractType, result.confidence)
+
+  // Build update — always store AI classification; update type only if high confidence
+  const existingMeta = (await prisma.contractRequest.findUnique({
+    where: { id: requestId }, select: { metadata: true },
+  }))?.metadata as Record<string, unknown> ?? {}
+
+  const updateData: Record<string, unknown> = {
+    metadata: { ...existingMeta, _aiClassification: result },
+  }
+  if (result.confidence >= 0.75) {
+    updateData.type = result.contractType
+  }
+
+  await prisma.contractRequest.update({
+    where: { id: requestId },
+    data:  updateData as Parameters<typeof prisma.contractRequest.update>[0]['data'],
+  })
+}
+
+// ─── redline-analysis ────────────────────────────────────────────────────────
+
+async function handleRedlineAnalysis(data: RedlineAnalysisJob): Promise<void> {
+  const { contractId, v1Id, v2Id, orgId, userId, contractType } = data
+  console.info('[agent-worker] redline-analysis start contractId=%s v1=%s v2=%s', contractId, v1Id, v2Id)
+
+  const res = await fetch(`${AGENTS_URL}/redline`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ contractId, v1Id, v2Id, orgId, userId, contractType }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /redline returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  createAuditEvent({
+    orgId,
+    userId,
+    action: AuditAction.REDLINE_ANALYZED,
+    resourceType: 'contract',
+    resourceId: contractId,
+    metadata: { v1Id, v2Id },
+  }).catch(() => {})
+
+  console.info('[agent-worker] redline-analysis queued in agents service contractId=%s', contractId)
+}
+
+// ─── approval-summary ─────────────────────────────────────────────────────────
+
+async function handleApprovalSummary(data: ApprovalSummaryJob): Promise<void> {
+  const { instanceId, contractId, versionId, orgId, approverIds } = data
+  console.info('[agent-worker] approval-summary start instanceId=%s contractId=%s', instanceId, contractId)
+
+  const res = await fetch(`${AGENTS_URL}/approval-summary`, {
+    method:  'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '',
+    },
+    body: JSON.stringify({ instanceId, contractId, versionId, orgId, approverIds }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /approval-summary returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+  console.info('[agent-worker] approval-summary queued in agents service instanceId=%s', instanceId)
+}
+
+// ─── draft-contract ──────────────────────────────────────────────────────────
+
+interface DraftContractJobData {
+  contractId: string
+  orgId: string
+  userId: string
+  requestTitle: string
+  requestDescription: string
+  contractType: string
+  counterpartyName?: string
+  estimatedValue?: number
+}
+
+async function handleDraftContract(data: DraftContractJobData): Promise<void> {
+  const { contractId, orgId, userId, requestTitle, requestDescription, contractType, counterpartyName, estimatedValue } = data
+  console.info('[agent-worker] draft-contract start contractId=%s type=%s', contractId, contractType)
+
+  const userMessage = `Draft a ${contractType} titled "${requestTitle}". ${requestDescription ?? ''}`
+  const context: Record<string, unknown> = {}
+  if (counterpartyName) context.counterpartyName = counterpartyName
+  if (estimatedValue) context.estimatedValue = estimatedValue
+
+  const res = await fetch(`${AGENTS_URL}/draft`, {
+    method:  'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '',
+    },
+    body: JSON.stringify({
+      user_message: userMessage,
+      org_id: orgId,
+      user_id: userId,
+      context,
+    }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /draft returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const result = await res.json() as { html?: string; error?: string }
+
+  if (result.error || !result.html) {
+    throw new Error(`Draft agent error: ${result.error ?? 'No HTML returned'}`)
+  }
+
+  // Save as version 1
+  const latest = await prisma.contractVersion.findFirst({
+    where: { contractId },
+    orderBy: { versionNumber: 'desc' },
+  })
+  const nextVersion = (latest?.versionNumber ?? 0) + 1
+
+  await prisma.contractVersion.create({
+    data: {
+      contractId,
+      versionNumber: nextVersion,
+      htmlContent:   result.html,
+      plainText:     result.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+      mimeType:      'text/html',
+      fileSize:      Buffer.byteLength(result.html),
+      changeNote:    'AI-generated first draft',
+      createdById:   userId,
+    },
+  })
+
+  // Mark contract as done drafting
+  await prisma.contract.update({
+    where: { id: contractId },
+    data:  { analysisStatus: 'DONE' },
+  })
+
+  console.info('[agent-worker] draft-contract done contractId=%s', contractId)
+}
+
+export const agentWorker = new Worker(
+  'agents',
+  async (job) => {
+    console.info('[worker:agents] → start name=%s id=%s', job.name, job.id)
+    if (job.name === 'detect-binder') {
+      await handleDetectBinder(job.data as DetectBinderJob)
+    } else if (job.name === 'classify-document') {
+      await handleClassifyDocument(job.data as ClassifyDocumentJob)
+    } else if (job.name === 'extract-ai') {
+      await handleExtractAi(job.data as ExtractAiJob)
+    } else if (job.name === 'classify-request') {
+      await handleClassifyRequest(job.data as ClassifyRequestJob)
+    } else if (job.name === 'redline-analysis') {
+      await handleRedlineAnalysis(job.data as RedlineAnalysisJob)
+    } else if (job.name === 'approval-summary') {
+      await handleApprovalSummary(job.data as ApprovalSummaryJob)
+    } else if (job.name === 'draft-contract') {
+      await handleDraftContract(job.data as DraftContractJobData)
+    }
+  },
+  { connection: redis, concurrency: 2 }
+)
+
+agentWorker.on('completed', (job) => {
+  console.info('[worker:agents] ✓ job done name=%s id=%s', job.name, job.id)
+})
+
+agentWorker.on('failed', async (job, err) => {
+  console.error('[worker:agents] ✗ job failed name=%s id=%s attempt=%d/%d err=%s',
+    job?.name, job?.id, job?.attemptsMade ?? 0, job?.opts?.attempts ?? 2, err.message)
+  const contractId = (job?.data as { contractId?: string })?.contractId
+  if (contractId && job && job.attemptsMade >= (job.opts.attempts ?? 2)) {
+    await prisma.contract.update({
+      where: { id: contractId },
+      data: { analysisStatus: 'FAILED', analysisError: err.message.slice(0, 500) },
+    }).catch(() => {})
+  }
+})
