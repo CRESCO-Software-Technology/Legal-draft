@@ -1,23 +1,25 @@
 /**
- * org-seed — public entry point.
+ * org-seed — pre-loaded library for every new org.
  *
- * The implementation lives in the modular `org-seed/` directory:
- *   - categories.ts  — 18 clause categories
- *   - clauses.ts     — 106 clauses spanning the negotiation spectrum
- *   - playbook.ts    — 66 playbook positions (4-tier coverage on negotiable categories)
- *   - templates.ts   — 20 contract templates
- *   - industry-packs/ — 5 vertical add-on packs (saas, healthcare, manufacturing, biotech, logistics)
+ * This file replaces the original no-op stub. The real implementation lives
+ * in the `org-seed/` directory (universal content + 5 industry packs);
+ * this file is the public re-export so existing import paths keep working.
  *
- * This file is preserved as a thin re-export so existing call sites
- * (auth.ts, scripts/seed-personas.ts) continue to work without changes.
+ *   import { seedOrgDefaults } from '../lib/org-seed.js'   // ← unchanged
  *
- * To opt into an industry pack at signup or in a persona seed, pass:
- *   await seedOrgDefaults(orgId, slug, adminId, { industryPack: 'saas' })
+ * Callers:
+ *   - signup endpoint            (routes/auth.ts:121)
+ *   - demo seed                  (prisma/seed.ts:236)
+ *   - seed-personas script       (scripts/seed-personas.ts)
  */
+
 export {
   seedOrgDefaults,
+  applyIndustryPack,
   UNIVERSAL_COUNTS,
+  PACK_COUNTS,
+  INDUSTRY_PACK_INFO,
+  type IndustryPackId,
   type SeedOrgOptions,
+  type SeedReport,
 } from './org-seed/index.js'
-export type { IndustryPackId } from './org-seed/types.js'
-export { INDUSTRY_PACK_INFO } from './org-seed/industry-packs/index.js'

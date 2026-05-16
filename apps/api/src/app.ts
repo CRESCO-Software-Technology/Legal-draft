@@ -40,6 +40,7 @@ import { organizationRoutes } from './routes/organization.js'
 import { healthRoutes } from './routes/health.js'
 import { internalAiRoutes } from './routes/internal-ai.js'
 import { adminAiRoutes } from './routes/admin-ai.js'
+import { adminPackRoutes } from './routes/admin-packs.js'
 import { agentThreadRoutes } from './routes/agent-threads.js'
 import { skillsRoutes } from './routes/skills.js'
 import { reviewQueueRoutes } from './routes/review-queue.js'
@@ -190,6 +191,7 @@ export async function buildApp() {
   await app.register(organizationRoutes,   { prefix: '/api/v1/organization' })
   await app.register(internalAiRoutes,     { prefix: '/api/internal/ai' })
   await app.register(adminAiRoutes,        { prefix: '/api/v1/admin/ai' })
+  await app.register(adminPackRoutes,      { prefix: '/api/v1/admin/packs' })
   await app.register(agentThreadRoutes,    { prefix: '/api/v1/agent/threads' })
   await app.register(skillsRoutes,         { prefix: '/api/v1/skills' })
   await app.register(reviewQueueRoutes,    { prefix: '/api/v1/review-queue' })
