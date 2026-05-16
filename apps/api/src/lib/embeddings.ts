@@ -26,12 +26,16 @@ import { prisma } from './prisma.js'
 
 // ─── Provider routing ───────────────────────────────────────────────────────
 
-export type EmbedProvider = 'voyage' | 'openai'
+export type EmbedProvider = 'voyage' | 'openai' | 'google'
 
 export function activeEmbedProvider(): EmbedProvider {
   if (process.env.VOYAGE_API_KEY) return 'voyage'
   if (process.env.OPENAI_API_KEY) return 'openai'
-  throw new Error('No embedding provider configured — set VOYAGE_API_KEY or OPENAI_API_KEY')
+  // Gemini embeddings (gemini-embedding-001). Matryoshka — we request
+  // exactly 1536 dims so it slots into the existing pgvector column with
+  // no padding. Task types map 1:1 onto our document/query split.
+  if (process.env.GOOGLE_API_KEY) return 'google'
+  throw new Error('No embedding provider configured — set VOYAGE_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY')
 }
 
 const PG_VECTOR_DIMS = 1536
@@ -96,21 +100,62 @@ async function openaiEmbed(texts: string[]): Promise<number[][]> {
   return data.data.sort((a, b) => a.index - b.index).map(d => d.embedding)
 }
 
+// ─── Gemini embeddings (single GOOGLE_API_KEY covers the whole stack) ───────
+// Uses gemini-embedding-001 with Matryoshka outputDimensionality=1536 so the
+// vectors drop straight into the pgvector(1536) column. taskType matches our
+// document/query split: RETRIEVAL_DOCUMENT for indexing, RETRIEVAL_QUERY for
+// search. Endpoint caps batches at 100 inputs per call.
+
+async function geminiEmbed(texts: string[], inputType: 'document' | 'query'): Promise<number[][]> {
+  const apiKey = process.env.GOOGLE_API_KEY!
+  const taskType = inputType === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT'
+  // gemini-embedding-001 cap: 2048 tokens per input. Be generous — char-trim
+  // to ~8000 chars (≈ safe under 2048 tokens for English/legal text).
+  const safe = texts.map(t => t.slice(0, 8000))
+  const chunks: string[][] = []
+  for (let i = 0; i < safe.length; i += 100) chunks.push(safe.slice(i, i + 100))
+
+  const all: number[][] = []
+  for (const batch of chunks) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: batch.map(text => ({
+            model: 'models/gemini-embedding-001',
+            content: { parts: [{ text }] },
+            taskType,
+            outputDimensionality: PG_VECTOR_DIMS,
+          })),
+        }),
+      },
+    )
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Gemini embeddings error: ${res.status} ${err}`)
+    }
+    const data = await res.json() as { embeddings: Array<{ values: number[] }> }
+    all.push(...data.embeddings.map(e => e.values))
+  }
+  return all
+}
+
 // ─── Public embed API — routes to the active provider ───────────────────────
 
 export async function embedText(text: string): Promise<number[]> {
   const provider = activeEmbedProvider()
-  const vecs = provider === 'voyage'
-    ? await voyageEmbed([text], 'query')
-    : await openaiEmbed([text])
-  return vecs[0]
+  if (provider === 'voyage') return (await voyageEmbed([text], 'query'))[0]
+  if (provider === 'google') return (await geminiEmbed([text], 'query'))[0]
+  return (await openaiEmbed([text]))[0]
 }
 
 async function embedTexts(texts: string[]): Promise<number[][]> {
   const provider = activeEmbedProvider()
-  return provider === 'voyage'
-    ? voyageEmbed(texts, 'document')
-    : openaiEmbed(texts)
+  if (provider === 'voyage') return voyageEmbed(texts, 'document')
+  if (provider === 'google') return geminiEmbed(texts, 'document')
+  return openaiEmbed(texts)
 }
 
 // ─── Voyage reranker (P7.7.1) ───────────────────────────────────────────────

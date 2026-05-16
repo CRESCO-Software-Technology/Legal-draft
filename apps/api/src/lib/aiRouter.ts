@@ -47,18 +47,22 @@ const PLATFORM_TIER_DEFAULTS: Record<Tier, Candidate[]> = {
     { provider: 'anthropic', model: 'claude-opus-4-7' },
     { provider: 'openai',    model: 'gpt-5' },
     { provider: 'openai',    model: 'gpt-4.1' }, // reliable fallback if gpt-5 unavailable on the account
+    { provider: 'google',    model: 'gemini-2.5-pro' },
   ],
   default: [
     { provider: 'anthropic', model: 'claude-sonnet-4-6' },
     { provider: 'openai',    model: 'gpt-4.1' },
+    { provider: 'google',    model: 'gemini-2.5-pro' },
   ],
   fast: [
     { provider: 'anthropic', model: 'claude-haiku-4-5' },
     { provider: 'openai',    model: 'gpt-4.1-mini' },
+    { provider: 'google',    model: 'gemini-2.5-flash' },
   ],
   embed: [
     { provider: 'voyage', model: 'voyage-law-2' },
     { provider: 'openai', model: 'text-embedding-3-large' },
+    { provider: 'google', model: 'gemini-embedding-001' },
   ],
   rerank: [
     { provider: 'voyage', model: 'voyage-rerank-2.5' },

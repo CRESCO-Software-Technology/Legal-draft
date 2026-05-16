@@ -38,6 +38,11 @@ MODEL_REGISTRY: list[ModelOption] = [
     ModelOption("google",    "gemini-1.5-pro",      "Gemini 1.5 Pro",      2_000_000),
     ModelOption("google",    "gemini-1.5-flash",    "Gemini 1.5 Flash",    1_000_000),
     ModelOption("google",    "gemini-2.0-flash",    "Gemini 2.0 Flash",    1_000_000),
+    # ─── OpenRouter ─────────────────────────────────────────────────────
+    # Single API key gateway. Model id is the OpenRouter slug
+    # ("provider/model") and is passed through verbatim to their /v1.
+    ModelOption("openrouter", "google/gemini-2.5-flash", "Gemini 2.5 Flash (OpenRouter)", 1_000_000),
+    ModelOption("openrouter", "openai/gpt-4.1",          "GPT-4.1 (OpenRouter)",          1_000_000),
 ]
 
 DEFAULT_PROVIDER = "anthropic"
@@ -95,6 +100,18 @@ def build_llm(
         return ChatGoogleGenerativeAI(
             model=model_id,
             google_api_key=api_key or settings.google_api_key,
+            streaming=streaming,
+        )
+
+    if provider == "openrouter":
+        # OpenRouter speaks the OpenAI Chat Completions schema, so we reuse
+        # ChatOpenAI with base_url overridden. model_id is the OpenRouter
+        # slug verbatim ("google/gemini-2.5-flash", "openai/gpt-4.1", ...).
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model_id,
+            api_key=api_key or settings.openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
             streaming=streaming,
         )
 

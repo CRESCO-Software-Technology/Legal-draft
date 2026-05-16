@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     google_api_key: str = ""
+    openrouter_api_key: str = ""
     redis_url: str = "redis://localhost:6379"
     database_url: str = ""
     node_env: str = "development"
@@ -34,7 +35,9 @@ def active_provider() -> str:
         return "anthropic"
     if settings.google_api_key:
         return "google"
-    raise RuntimeError("No LLM API key found. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY in .env")
+    if settings.openrouter_api_key:
+        return "openrouter"
+    raise RuntimeError("No LLM API key found. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY in .env")
 
 
 # P7.0.2 (F-82) — Map provider names to whether their API key is configured.
@@ -42,9 +45,10 @@ def active_provider() -> str:
 # when the caller asks for one that has no key (e.g. ChatMessageSchema's
 # default 'anthropic' but only OPENAI_API_KEY is in env).
 def is_provider_configured(provider: str) -> bool:
-    if provider == "openai":    return bool(settings.openai_api_key)
-    if provider == "anthropic": return bool(settings.anthropic_api_key)
-    if provider == "google":    return bool(settings.google_api_key)
+    if provider == "openai":     return bool(settings.openai_api_key)
+    if provider == "anthropic":  return bool(settings.anthropic_api_key)
+    if provider == "google":     return bool(settings.google_api_key)
+    if provider == "openrouter": return bool(settings.openrouter_api_key)
     return False
 
 
@@ -78,14 +82,18 @@ def resolve_provider(requested: str | None) -> str:
 def model_for(provider: str, tier: str = "smart") -> str:
     """Return the default model id for a provider + tier (fast | smart)."""
     fast = {
-        "openai":    "gpt-4o-mini",
-        "anthropic": "claude-haiku-4-5-20251001",
-        "google":    "gemini-1.5-flash",
+        "openai":     "gpt-4o-mini",
+        "anthropic":  "claude-haiku-4-5-20251001",
+        "google":     "gemini-2.5-flash",
+        # OpenRouter — gemini 2.5 flash is the extraction/fast pick.
+        "openrouter": "google/gemini-2.5-flash",
     }
     smart = {
-        "openai":    "gpt-4o",
-        "anthropic": "claude-sonnet-4-6",
-        "google":    "gemini-1.5-pro",
+        "openai":     "gpt-4o",
+        "anthropic":  "claude-sonnet-4-6",
+        "google":     "gemini-2.5-pro",
+        # OpenRouter — gpt-4.1 is the chat/reasoning pick.
+        "openrouter": "openai/gpt-4.1",
     }
     table = smart if tier == "smart" else fast
     return table.get(provider, smart["openai"])
@@ -97,7 +105,8 @@ def active_model() -> str:
     defaults = {
         "openai":     "gpt-4o-mini",
         "anthropic":  "claude-haiku-4-5-20251001",
-        "google":     "gemini-1.5-flash",
+        "google":     "gemini-2.5-flash",
+        "openrouter": "google/gemini-2.5-flash",
     }
     return defaults[p]
 
@@ -108,6 +117,7 @@ def smart_model() -> str:
     best = {
         "openai":     "gpt-4o",
         "anthropic":  "claude-sonnet-4-6",
-        "google":     "gemini-1.5-pro",
+        "google":     "gemini-2.5-pro",
+        "openrouter": "openai/gpt-4.1",
     }
     return best[p]
