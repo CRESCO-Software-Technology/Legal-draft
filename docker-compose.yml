@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: clm
       POSTGRES_DB: clm_dev
     ports:
-      - '5432:5432'
+      - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
     image: redis:7-alpine
     container_name: clm_redis
     ports:
-      - '6379:6379'
+      - '6380:6379'
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -56,9 +56,15 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      # OrbStack auto-injects *_FILE variants which override the plain ones; null them out.
+      MINIO_ROOT_USER_FILE: ''
+      MINIO_ROOT_PASSWORD_FILE: ''
+      MINIO_ACCESS_KEY_FILE: ''
+      MINIO_SECRET_KEY_FILE: ''
+      MINIO_CONFIG_ENV_FILE: ''
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '9100:9000'
+      - '9101:9001'
     volumes:
       - minio_data:/data
     healthcheck:
