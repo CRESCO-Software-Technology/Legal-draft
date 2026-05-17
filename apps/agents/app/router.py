@@ -64,14 +64,19 @@ class ResolvedLlm:
 _PLATFORM_TIERS: dict[Tier, list[tuple[str, str]]] = {
     "reasoning":  [("anthropic", "claude-opus-4-7"),
                    ("openai",    "gpt-5"),
-                   ("openai",    "gpt-4.1")],
+                   ("openai",    "gpt-4.1"),
+                   ("google",    "gemini-2.5-pro")],
     "default":    [("anthropic", "claude-sonnet-4-6"),
-                   ("openai",    "gpt-4.1")],
+                   ("openai",    "gpt-4.1"),
+                   ("google",    "gemini-2.5-pro")],
     "fast":       [("anthropic", "claude-haiku-4-5"),
-                   ("openai",    "gpt-4.1-mini")],
-    "embed":      [("openai",    "text-embedding-3-large")],
+                   ("openai",    "gpt-4.1-mini"),
+                   ("google",    "gemini-2.5-flash")],
+    "embed":      [("openai",    "text-embedding-3-large"),
+                   ("google",    "gemini-embedding-001")],
     "rerank":     [("openai",    "gpt-4.1-mini")],
-    "vision_ocr": [("openai",    "gpt-4.1")],
+    "vision_ocr": [("openai",    "gpt-4.1"),
+                   ("google",    "gemini-2.5-pro")],
 }
 
 _ENV_KEY = {

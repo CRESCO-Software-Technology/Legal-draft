@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 _FAST_MODEL: dict[str, str] = {
     "anthropic": "claude-haiku-4-5-20251001",
     "openai":    "gpt-4o-mini",
-    "google":    "gemini-1.5-flash",
+    "google":    "gemini-2.5-flash",  # was gemini-1.5-flash — not enabled on current GCP project / v1beta
 }
 
 router = APIRouter()
