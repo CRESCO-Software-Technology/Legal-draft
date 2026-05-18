@@ -10,7 +10,7 @@ class ContractUpdateArgs(BaseModel):
     patch:       dict = Field(default_factory=dict, description="Field patch.")
 
 
-def build_contract_update(_org_id: str) -> StructuredTool:
+def build_contract_update(_org_id: str, _user_id: str | None = None) -> StructuredTool:
     async def _arun(contract_id: str, patch: dict | None = None) -> str:  # noqa: ARG001
         return '{"error":"contract_update_unavailable_in_this_build"}'
 

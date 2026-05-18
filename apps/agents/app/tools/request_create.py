@@ -10,7 +10,7 @@ class RequestCreateArgs(BaseModel):
     description: str = Field("", description="Request description.")
 
 
-def build_request_create(_org_id: str) -> StructuredTool:
+def build_request_create(_org_id: str, _user_id: str | None = None) -> StructuredTool:
     async def _arun(title: str, description: str = "") -> str:  # noqa: ARG001
         return '{"error":"request_create_unavailable_in_this_build"}'
 

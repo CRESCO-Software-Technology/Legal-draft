@@ -10,7 +10,7 @@ class CommentAddArgs(BaseModel):
     body:        str = Field(..., description="Comment body.")
 
 
-def build_comment_add(_org_id: str) -> StructuredTool:
+def build_comment_add(_org_id: str, _user_id: str | None = None) -> StructuredTool:
     async def _arun(contract_id: str, body: str) -> str:  # noqa: ARG001
         return '{"error":"comment_add_unavailable_in_this_build"}'
 
