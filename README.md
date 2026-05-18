@@ -55,12 +55,32 @@ cd ../..
 
 ---
 
-## Running
+## Running locally
 
-### 1. Infrastructure (PostgreSQL, Redis, MinIO, etc.)
+### 1. Infrastructure (PostgreSQL, Redis, Elasticsearch, MinIO, Gotenberg)
 ```bash
 docker compose up -d
 docker compose ps   # wait until all services are healthy
+```
+
+The default ports in [`docker-compose.yml`](docker-compose.yml) are remapped to
+avoid local conflicts:
+
+| Service | Host port | In-container port |
+|---|---|---|
+| Postgres (+ pgvector) | **5433** | 5432 |
+| Redis | **6380** | 6379 |
+| Elasticsearch | 9200 | 9200 |
+| MinIO S3 API | **9100** | 9000 |
+| MinIO console | **9101** | 9001 |
+| Gotenberg | 3002 | 3000 |
+
+Update the URLs in your `.env` accordingly:
+
+```
+DATABASE_URL=postgresql://clm:clm@localhost:5433/clm_dev
+REDIS_URL=redis://localhost:6380
+S3_ENDPOINT=http://localhost:9100
 ```
 
 ### 2. Database
@@ -86,6 +106,57 @@ cd apps/agents
 source .venv/bin/activate
 uvicorn main:app --port 8000 --reload
 ```
+
+---
+
+## Hosting / deploying
+
+The codebase ships three orchestration paths from the same source. Pick the one
+that matches where you are:
+
+| Path | When to use | Cost |
+|---|---|---|
+| **Local Docker Compose** (above) | Dev machines, internal demos on a laptop | $0 |
+| **Cloud Run cheap-launch** | First 1–10 users, public demo, hobby cost | ~$0 idle, grows linearly with traffic |
+| **EKS / Kubernetes** (vision: [docs/operations/19-DEPLOYMENT-STRATEGY.md](docs/operations/19-DEPLOYMENT-STRATEGY.md)) | Production with paying customers, multi-AZ | Standard SaaS infra cost |
+
+The Dockerfiles are shared — the same images run on Compose, Cloud Run, EKS,
+Render, Fly, or any plain Docker host.
+
+### Deploy to Cloud Run (cheap-launch)
+
+The full step-by-step is in [docs/operations/20-CLOUD-RUN-LAUNCH.md](docs/operations/20-CLOUD-RUN-LAUNCH.md).
+Short version:
+
+1. **Managed deps (one-time)** — sign up for [Neon](https://neon.tech) (Postgres),
+   [Upstash](https://upstash.com) (Redis), [Bonsai](https://bonsai.io) (Elasticsearch).
+   Create a GCS bucket with an HMAC key. Free tiers on all four are enough for a demo.
+2. **Run migrations once against Neon**:
+   ```bash
+   DATABASE_URL="<neon-url>" pnpm --filter api prisma migrate deploy
+   DATABASE_URL="<neon-url>" pnpm --filter api db:seed
+   ```
+3. **Put your secrets in Secret Manager** — `DATABASE_URL`, `REDIS_URL`,
+   `ELASTICSEARCH_URL`, JWT secrets, LLM API keys. List + commands are in the runbook.
+4. **Copy the env templates and fill in non-secret URLs**:
+   ```bash
+   cp env.api.example.yaml env.api.yaml
+   cp env.agents.example.yaml env.agents.yaml
+   ```
+5. **Set the Firebase project ID** in [.firebaserc](.firebaserc).
+6. **Deploy** — runs three Cloud Run services + the Firebase Hosting frontend:
+   ```bash
+   gcloud auth login
+   firebase login
+   VITE_API_URL=https://api.your-domain.com ./scripts/deploy.sh all
+   ```
+7. **DNS** — point `app.your-domain.com` at Firebase Hosting and `api.your-domain.com`
+   at Cloud Run via `gcloud beta run domain-mappings create`. Cloudflare or any DNS
+   provider works.
+
+Steady-state cost when idle is roughly **$0/month**. Cold starts on first request
+are ~1–2 s for the API and ~3–5 s for agents (Python LangChain imports). The
+first thing to outgrow is Neon's 0.5 GB free tier — Neon Launch is ~$19/mo.
 
 ---
 
