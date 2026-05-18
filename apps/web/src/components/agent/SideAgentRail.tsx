@@ -40,6 +40,7 @@ import { RedlinePreview, type RedlineProposal } from './RedlinePreview'
 import { CitationPills, type CitationBundle } from './CitationPills'
 import { parseActionChips } from './action-chips'
 import { ChipRow } from './ChipButton'
+import { MarkdownProse } from './MarkdownProse'
 
 const STORAGE_KEY = 'side-agent-rail:open'
 
@@ -1910,15 +1911,22 @@ function MessageBubble({
       )}
       <div
         className={
-          'max-w-[85%] rounded-2xl px-3 py-2 text-[12.5px] leading-relaxed whitespace-pre-wrap ' +
+          'max-w-[85%] rounded-2xl px-3 py-2 text-[12.5px] leading-relaxed ' +
+          // User + error bubbles stay plain-text (preserve their whitespace
+          // for typed input / raw error output). Assistant bubble below
+          // renders Markdown so **bold**, * lists, and `code` show correctly.
           (isUser
-            ? 'bg-blue-600 text-white rounded-br-sm'
+            ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap'
             : (msg.error
-                ? 'bg-red-50 border border-red-100 text-red-900 rounded-bl-sm'
+                ? 'bg-red-50 border border-red-100 text-red-900 rounded-bl-sm whitespace-pre-wrap'
                 : 'bg-gray-100 text-gray-900 rounded-bl-sm'))
         }
       >
-        {cleanProse || (msg.streaming ? <Sparkles className="h-3.5 w-3.5 animate-pulse text-gray-400" /> : null)}
+        {cleanProse
+          ? (isUser || msg.error
+              ? cleanProse
+              : <MarkdownProse text={cleanProse} compact />)
+          : (msg.streaming ? <Sparkles className="h-3.5 w-3.5 animate-pulse text-gray-400" /> : null)}
         {msg.streaming && (msg.content?.length ?? 0) > 0 && (
           <span className="inline-block w-1.5 h-3 bg-gray-400 ml-0.5 animate-pulse align-middle" aria-hidden />
         )}

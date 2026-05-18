@@ -48,6 +48,7 @@ import { ArtifactPane, type Artifact } from '@/components/agent/ArtifactPane'
 import { artifactFromToolResult } from '@/components/agent/artifact-from-tool'
 import { parseActionChips } from '@/components/agent/action-chips'
 import { ChipRow } from '@/components/agent/ChipButton'
+import { MarkdownProse } from '@/components/agent/MarkdownProse'
 import { cn } from '@/lib/utils'
 
 interface ThreadSummary {
@@ -1021,8 +1022,12 @@ function MessageBubble({
             ))}
           </div>
         )}
-        <div className="text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">
-          {cleanProse}
+        <div className="text-sm text-gray-900 leading-relaxed">
+          {/* Markdown rendering (bold, lists, code, links) — Gemini and
+              Claude both return Markdown in assistant prose. Prior to
+              this the response was rendered with whitespace-pre-wrap
+              so users saw literal `**`, `*`, etc. */}
+          {cleanProse && <MarkdownProse text={cleanProse} />}
           {message.streaming && !message.content && (
             <span className="inline-flex items-center gap-1 text-gray-400">
               <Loader2 className="h-3 w-3 animate-spin" /> thinking…
