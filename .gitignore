@@ -13,6 +13,13 @@ out/
 .env.*
 !.env.example
 
+# Cloud Run env-vars files — real values live here, examples are tracked
+env.api.yaml
+env.agents.yaml
+
+# Firebase build artefacts / cache
+.firebase/
+
 # Python
 __pycache__/
 *.pyc
