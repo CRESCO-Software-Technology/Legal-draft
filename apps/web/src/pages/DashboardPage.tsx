@@ -8,6 +8,7 @@ import {
   Upload, Plus, ArrowRight, Loader2, CircleCheckBig, FileEdit, Clock,
   MessageSquareWarning, Repeat, AlertTriangle, Building2,
 } from 'lucide-react'
+import { toast } from '@/components/common/Toaster'
 import { Button } from '@/components/ui/button'
 import { UploadModal } from '@/components/contracts/UploadModal'
 import { NewRequestModal } from '@/components/requests/NewRequestModal'
@@ -220,6 +221,35 @@ export function DashboardPage() {
         <YourDayBand yourDay={stats.yourDay} />
       )}
 
+      {/* Quick Actions — promoted above KPIs so the action-oriented buttons
+          land in the first eye-stop (was buried below the cards). Same
+          three actions, same selectors — only the position moved. */}
+      <div className="flex items-center gap-3" data-testid="dashboard-quick-actions">
+        <Button
+          onClick={() => setShowUpload(true)}
+          data-testid="quick-upload-contract"
+          className="gap-2"
+        >
+          <Upload className="h-4 w-4" /> Upload Contract
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setShowNewRequest(true)}
+          data-testid="quick-new-request"
+          className="gap-2"
+        >
+          <Plus className="h-4 w-4" /> New Request
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => navigate('/approvals')}
+          data-testid="quick-view-approvals"
+          className="gap-2"
+        >
+          <CheckSquare className="h-4 w-4" /> View Approvals
+        </Button>
+      </div>
+
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" data-testid="dashboard-kpi-cards">
         {cards.map(({ label, value, icon: Icon, color, bg, to }) => {
@@ -252,34 +282,6 @@ export function DashboardPage() {
             </button>
           )
         })}
-      </div>
-
-      {/* Quick Actions */}
-      <div className="flex items-center gap-3">
-        <Button
-          variant="outline"
-          onClick={() => setShowUpload(true)}
-          data-testid="quick-upload-contract"
-          className="gap-2"
-        >
-          <Upload className="h-4 w-4" /> Upload Contract
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setShowNewRequest(true)}
-          data-testid="quick-new-request"
-          className="gap-2"
-        >
-          <Plus className="h-4 w-4" /> New Request
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/approvals')}
-          data-testid="quick-view-approvals"
-          className="gap-2"
-        >
-          <CheckSquare className="h-4 w-4" /> View Approvals
-        </Button>
       </div>
 
       {/* Recent Activity */}
@@ -383,6 +385,13 @@ export function DashboardPage() {
           onSuccess={() => {
             setShowUpload(false)
             queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
+            // Sonner toast — gives users immediate feedback that the upload
+            // landed and that extraction is now running. Previously the modal
+            // just closed silently, leaving the user wondering if anything
+            // happened.
+            toast.success('Contract uploaded', {
+              description: 'Extraction started — facts and clauses will populate in a few seconds.',
+            })
           }}
         />
       )}
