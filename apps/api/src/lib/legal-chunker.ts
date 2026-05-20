@@ -93,42 +93,45 @@ function slidingWindowChunks(text: string, baseOffset = 0): SubChunk[] {
 // ─── ES clauses index ────────────────────────────────────────────────────────
 
 export async function ensureClausesIndex() {
+  // @opensearch-project/opensearch wraps every response in { body, ... }
   const exists = await es.indices.exists({ index: CLAUSES_INDEX })
-  if (exists) return
+  if (exists.body === true) return
 
   await es.indices.create({
     index: CLAUSES_INDEX,
-    settings: {
-      analysis: {
-        analyzer: {
-          legal_english: {
-            type:      'custom',
-            tokenizer: 'standard',
-            filter:    ['lowercase', 'english_stop', 'english_stemmer'],
+    body: {
+      settings: {
+        analysis: {
+          analyzer: {
+            legal_english: {
+              type:      'custom',
+              tokenizer: 'standard',
+              filter:    ['lowercase', 'english_stop', 'english_stemmer'],
+            },
+          },
+          filter: {
+            english_stop:    { type: 'stop',    stopwords: '_english_' },
+            english_stemmer: { type: 'stemmer', language: 'english'   },
           },
         },
-        filter: {
-          english_stop:    { type: 'stop',    stopwords: '_english_' },
-          english_stemmer: { type: 'stemmer', language: 'english'   },
-        },
       },
-    },
-    mappings: {
-      properties: {
-        contractId:    { type: 'keyword' },
-        versionId:     { type: 'keyword' },
-        orgId:         { type: 'keyword' },
-        clauseType:    { type: 'keyword' },
-        content:       { type: 'text', analyzer: 'legal_english' },
-        sortOrder:     { type: 'integer' },
-        isSubChunk:    { type: 'boolean' },
-        windowIndex:   { type: 'integer' },
-        charStart:     { type: 'integer' },
-        charEnd:       { type: 'integer' },
-        // Denormalized scalar contract fields for filtering
-        contractTitle: { type: 'text', fields: { keyword: { type: 'keyword' } } },
-        contractType:  { type: 'keyword' },
-        jurisdiction:  { type: 'keyword' },
+      mappings: {
+        properties: {
+          contractId:    { type: 'keyword' },
+          versionId:     { type: 'keyword' },
+          orgId:         { type: 'keyword' },
+          clauseType:    { type: 'keyword' },
+          content:       { type: 'text', analyzer: 'legal_english' },
+          sortOrder:     { type: 'integer' },
+          isSubChunk:    { type: 'boolean' },
+          windowIndex:   { type: 'integer' },
+          charStart:     { type: 'integer' },
+          charEnd:       { type: 'integer' },
+          // Denormalized scalar contract fields for filtering
+          contractTitle: { type: 'text', fields: { keyword: { type: 'keyword' } } },
+          contractType:  { type: 'keyword' },
+          jurisdiction:  { type: 'keyword' },
+        },
       },
     },
   })
@@ -263,8 +266,10 @@ export async function legalChunkAndStore(
   }
 
   if (body.length > 0) {
-    const result = await es.bulk({ body, refresh: false })
-    const errors = result.items.filter((i: any) => i.index?.error)
+    // @opensearch-project/opensearch wraps every response in { body, statusCode, … }
+    const raw = await es.bulk({ body, refresh: false })
+    const result = raw.body
+    const errors = (result?.items ?? []).filter((i: any) => i.index?.error)
     if (errors.length > 0) {
       console.error('[legal-chunker] ES bulk errors=%d sample=%j', errors.length, errors[0])
       throw new Error(`ES bulk index failed: ${errors.length} error(s) — sample: ${JSON.stringify(errors[0]?.index?.error)}`)

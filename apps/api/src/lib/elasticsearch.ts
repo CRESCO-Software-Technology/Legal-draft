@@ -16,27 +16,30 @@ export const CONTRACT_INDEX = 'contracts'
 // ─── Index mapping ────────────────────────────────────────────────────────────
 
 export async function ensureContractIndex() {
+  // @opensearch-project/opensearch wraps every response in { body, statusCode, ... }.
+  // For boolean ops like indices.exists, the real value lives at `.body`.
   const exists = await es.indices.exists({ index: CONTRACT_INDEX })
-  if (exists) return
+  if (exists.body === true) return
 
   await es.indices.create({
     index: CONTRACT_INDEX,
-    settings: {
-      analysis: {
-        analyzer: {
-          legal_english: {
-            type: 'custom',
-            tokenizer: 'standard',
-            filter: ['lowercase', 'english_stop', 'english_stemmer'],
+    body: {
+      settings: {
+        analysis: {
+          analyzer: {
+            legal_english: {
+              type: 'custom',
+              tokenizer: 'standard',
+              filter: ['lowercase', 'english_stop', 'english_stemmer'],
+            },
+          },
+          filter: {
+            english_stop:    { type: 'stop',    stopwords: '_english_' },
+            english_stemmer: { type: 'stemmer', language: 'english' },
           },
         },
-        filter: {
-          english_stop:    { type: 'stop',    stopwords: '_english_' },
-          english_stemmer: { type: 'stemmer', language: 'english' },
-        },
       },
-    },
-    mappings: {
+      mappings: {
       dynamic_templates: [
         {
           keyterms_as_keyword: {
@@ -74,6 +77,7 @@ export async function ensureContractIndex() {
         keyTerms:         { type: 'object', dynamic: true },
         clauseFlags:      { type: 'object', dynamic: true },
         metadata:         { type: 'object', dynamic: true },
+        },
       },
     },
   })
@@ -103,7 +107,7 @@ export interface ContractDoc {
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function indexContract(id: string, doc: ContractDoc) {
-  await es.index({ index: CONTRACT_INDEX, id, document: doc })
+  await es.index({ index: CONTRACT_INDEX, id, body: doc })
 }
 
 export async function deleteContractFromIndex(id: string) {
@@ -198,24 +202,27 @@ export function buildESQuery(orgId: string, filters: SearchFilters): any {
 // ─── Full-text search ─────────────────────────────────────────────────────────
 
 export async function searchContracts(orgId: string, query: string, size = 20) {
-  const result = await es.search<ContractDoc>({
+  const raw = await es.search({
     index: CONTRACT_INDEX,
-    size,
-    query: buildESQuery(orgId, { q: query }),
-    highlight: {
-      fields: {
-        title:            { number_of_fragments: 1 },
-        counterpartyName: { number_of_fragments: 1 },
-        plainText:        { number_of_fragments: 2, fragment_size: 200 },
-        summary:          { number_of_fragments: 1, fragment_size: 150 },
+    body: {
+      size,
+      query: buildESQuery(orgId, { q: query }),
+      highlight: {
+        fields: {
+          title:            { number_of_fragments: 1 },
+          counterpartyName: { number_of_fragments: 1 },
+          plainText:        { number_of_fragments: 2, fragment_size: 200 },
+          summary:          { number_of_fragments: 1, fragment_size: 150 },
+        },
       },
     },
   })
+  const result = raw.body
 
-  return result.hits.hits.map(h => ({
+  return result.hits.hits.map((h: any) => ({
     id: h._id,
     score: h._score,
-    source: h._source,
+    source: h._source as ContractDoc,
     highlights: h.highlight,
   }))
 }
@@ -223,32 +230,35 @@ export async function searchContracts(orgId: string, query: string, size = 20) {
 // ─── Advanced search (filters + optional keyword) ────────────────────────────
 
 export async function advancedSearch(orgId: string, filters: SearchFilters, size = 20) {
-  const result = await es.search<ContractDoc>({
+  const raw = await es.search({
     index: CONTRACT_INDEX,
-    size,
-    query: buildESQuery(orgId, filters),
-    sort: filters.q
-      ? [{ _score: { order: 'desc' } }, { createdAt: { order: 'desc' } }]
-      : [{ createdAt: { order: 'desc' } }],
-    highlight: filters.q ? {
-      fields: {
-        title:            { number_of_fragments: 1 },
-        // U3 audit (2026-04-29) — counterpartyName matches needed in
-        // the highlight set so the list page can show "matched in
-        // counterparty" when the row title doesn't visibly contain
-        // the searched term ("Iowa" → "Iora Health").
-        counterpartyName: { number_of_fragments: 1 },
-        plainText:        { number_of_fragments: 2, fragment_size: 200 },
-        summary:          { number_of_fragments: 1, fragment_size: 150 },
-      },
-    } : undefined,
+    body: {
+      size,
+      query: buildESQuery(orgId, filters),
+      sort: filters.q
+        ? [{ _score: { order: 'desc' } }, { createdAt: { order: 'desc' } }]
+        : [{ createdAt: { order: 'desc' } }],
+      highlight: filters.q ? {
+        fields: {
+          title:            { number_of_fragments: 1 },
+          // U3 audit (2026-04-29) — counterpartyName matches needed in
+          // the highlight set so the list page can show "matched in
+          // counterparty" when the row title doesn't visibly contain
+          // the searched term ("Iowa" → "Iora Health").
+          counterpartyName: { number_of_fragments: 1 },
+          plainText:        { number_of_fragments: 2, fragment_size: 200 },
+          summary:          { number_of_fragments: 1, fragment_size: 150 },
+        },
+      } : undefined,
+    },
   })
+  const result = raw.body
 
   return {
-    hits: result.hits.hits.map(h => ({
+    hits: result.hits.hits.map((h: any) => ({
       id: h._id,
       score: h._score,
-      source: h._source,
+      source: h._source as ContractDoc,
       highlights: h.highlight,
     })),
     total: typeof result.hits.total === 'number'
@@ -260,11 +270,12 @@ export async function advancedSearch(orgId: string, filters: SearchFilters, size
 // ─── Facets aggregation ───────────────────────────────────────────────────────
 
 export async function getContractFacets(orgId: string, baseFilters: Omit<SearchFilters, 'q'> = {}) {
-  const result = await es.search({
+  const raw = await es.search({
     index: CONTRACT_INDEX,
-    size: 0,
-    query: buildESQuery(orgId, baseFilters),
-    aggs: {
+    body: {
+      size: 0,
+      query: buildESQuery(orgId, baseFilters),
+      aggs: {
       by_type: { terms: { field: 'type', size: 20 } },
       by_status: { terms: { field: 'status', size: 10 } },
       by_jurisdiction: { terms: { field: 'jurisdiction', size: 30, missing: 'Unknown' } },
@@ -296,9 +307,10 @@ export async function getContractFacets(orgId: string, baseFilters: Omit<SearchF
       assignment_restriction: { filter: { term: { 'clauseFlags.assignmentRestriction': true } } },
       limitation_of_liability:{ filter: { term: { 'clauseFlags.limitationOfLiability': true } } },
       indemnification:        { filter: { term: { 'clauseFlags.indemnification': true } } },
+      },
     },
   })
-
+  const result = raw.body
   const aggs = result.aggregations as Record<string, any>
 
   return {

@@ -206,6 +206,42 @@ if (!candidate) {
   }
 }
 
+// ── 13b. Contract upload (GCS write + DB row) ────────────────────────────
+section(7.5, 'Contract upload (multipart → GCS → DB row)')
+const minimalPdf = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+  '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+  '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj\n' +
+  '4 0 obj<</Length 44>>stream\nBT /F1 12 Tf 50 720 Td (smoke) Tj ET\nendstream endobj\n' +
+  'xref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000056 00000 n \n0000000111 00000 n \n0000000188 00000 n \n' +
+  'trailer<</Size 5/Root 1 0 R>>\nstartxref\n284\n%%EOF\n'
+)
+const form = new FormData()
+form.append('file', new Blob([minimalPdf], { type: 'application/pdf' }), 'smoke-test.pdf')
+form.append('title', `Smoke ${new Date().toISOString()}`)
+form.append('type', 'OTHER')
+form.append('counterpartyName', 'Smoke Co')
+
+const uploadT0 = Date.now()
+const uploadRes = await fetch(`${BASE}/api/v1/contracts/upload`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${TOKEN}` },
+  body: form,
+})
+const uploadBody = await uploadRes.json().catch(() => null)
+const uploadMs = Date.now() - uploadT0
+if (uploadRes.status === 201 && uploadBody?.id) {
+  ok('POST /contracts/upload', `id=${uploadBody.id.slice(0, 12)}…  s3Key set  ${uploadMs}ms`)
+  // verify it shows up in the list
+  await new Promise(r => setTimeout(r, 1500))
+  const list = await fetchJson('/api/v1/contracts?limit=50', { headers: HEAD })
+  const found = (list.body?.data ?? []).some(c => c.id === uploadBody.id)
+  if (found) ok('uploaded contract appears in GET /contracts list')
+  else ko('uploaded contract NOT in list', `expected id ${uploadBody.id}`)
+} else {
+  ko('POST /contracts/upload', `status=${uploadRes.status}  body=${JSON.stringify(uploadBody).slice(0, 200)}`)
+}
+
 // ── 14. Static front-end ──────────────────────────────────────────────────
 section(8, 'Front-end shell + API proxy')
 const html = await fetch(BASE)
