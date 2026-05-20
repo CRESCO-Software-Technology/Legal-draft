@@ -78,16 +78,26 @@ const PLATFORM_TIER_DEFAULTS: Record<Tier, Candidate[]> = {
 
 // ─── Platform env keys (read once on import, refreshed on demand) ────────────
 
+// Sentinel values that operators seed into Secret Manager when they don't
+// have a real key for a provider. Treat them as missing so the router falls
+// through to the next tier candidate instead of handing a garbage key to
+// the upstream API and 401-ing the user.
+const PLACEHOLDER_VALUES = new Set(['', 'placeholder', 'REPLACE', 'TODO', 'unset'])
+
 function platformKey(provider: string): string | undefined {
+  let raw: string | undefined
   switch (provider) {
-    case 'openai':    return process.env.OPENAI_API_KEY
-    case 'anthropic': return process.env.ANTHROPIC_API_KEY
-    case 'google':    return process.env.GOOGLE_API_KEY
-    case 'voyage':    return process.env.VOYAGE_API_KEY
-    case 'cohere':    return process.env.COHERE_API_KEY
-    case 'mistral':   return process.env.MISTRAL_API_KEY
+    case 'openai':    raw = process.env.OPENAI_API_KEY;    break
+    case 'anthropic': raw = process.env.ANTHROPIC_API_KEY; break
+    case 'google':    raw = process.env.GOOGLE_API_KEY;    break
+    case 'voyage':    raw = process.env.VOYAGE_API_KEY;    break
+    case 'cohere':    raw = process.env.COHERE_API_KEY;    break
+    case 'mistral':   raw = process.env.MISTRAL_API_KEY;   break
     default:          return undefined
   }
+  if (!raw) return undefined
+  if (PLACEHOLDER_VALUES.has(raw.trim())) return undefined
+  return raw
 }
 
 // ─── Per-org override + BYOK lookups ─────────────────────────────────────────

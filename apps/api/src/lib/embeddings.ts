@@ -28,13 +28,21 @@ import { prisma } from './prisma.js'
 
 export type EmbedProvider = 'voyage' | 'openai' | 'google'
 
+// Sentinel values that operators seed when a real key isn't set. Treat them
+// as missing so this function never picks a provider whose key would 401.
+// (The same set is filtered out by aiRouter.platformKey.)
+const PLACEHOLDER_VALUES = new Set(['', 'placeholder', 'REPLACE', 'TODO', 'unset'])
+function realKey(v: string | undefined): boolean {
+  return !!v && !PLACEHOLDER_VALUES.has(v.trim())
+}
+
 export function activeEmbedProvider(): EmbedProvider {
-  if (process.env.VOYAGE_API_KEY) return 'voyage'
-  if (process.env.OPENAI_API_KEY) return 'openai'
+  if (realKey(process.env.VOYAGE_API_KEY)) return 'voyage'
+  if (realKey(process.env.OPENAI_API_KEY)) return 'openai'
   // Gemini embeddings (gemini-embedding-001). Matryoshka — we request
   // exactly 1536 dims so it slots into the existing pgvector column with
   // no padding. Task types map 1:1 onto our document/query split.
-  if (process.env.GOOGLE_API_KEY) return 'google'
+  if (realKey(process.env.GOOGLE_API_KEY)) return 'google'
   throw new Error('No embedding provider configured — set VOYAGE_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY')
 }
 
