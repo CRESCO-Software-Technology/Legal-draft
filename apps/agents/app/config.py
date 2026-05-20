@@ -28,16 +28,27 @@ settings = Settings()
 
 
 def active_provider() -> str:
-    """Return the first provider that has an API key configured."""
-    if settings.openai_api_key:
+    """Return the first provider that has a *real* API key configured."""
+    if _is_real_key(settings.openai_api_key):
         return "openai"
-    if settings.anthropic_api_key:
+    if _is_real_key(settings.anthropic_api_key):
         return "anthropic"
-    if settings.google_api_key:
+    if _is_real_key(settings.google_api_key):
         return "google"
-    if settings.openrouter_api_key:
+    if _is_real_key(settings.openrouter_api_key):
         return "openrouter"
     raise RuntimeError("No LLM API key found. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY in .env")
+
+
+# Sentinel values that Secret Manager seeds when an operator hasn't supplied a
+# real key yet. Treat them as unset so the fallback logic in resolve_provider()
+# can swap to a configured provider instead of calling Anthropic/OpenAI with
+# garbage and surfacing a 401 to the user.
+_PLACEHOLDER_VALUES = {"", "placeholder", "REPLACE", "TODO", "unset"}
+
+
+def _is_real_key(value: str) -> bool:
+    return value.strip() not in _PLACEHOLDER_VALUES
 
 
 # P7.0.2 (F-82) — Map provider names to whether their API key is configured.
@@ -45,10 +56,10 @@ def active_provider() -> str:
 # when the caller asks for one that has no key (e.g. ChatMessageSchema's
 # default 'anthropic' but only OPENAI_API_KEY is in env).
 def is_provider_configured(provider: str) -> bool:
-    if provider == "openai":     return bool(settings.openai_api_key)
-    if provider == "anthropic":  return bool(settings.anthropic_api_key)
-    if provider == "google":     return bool(settings.google_api_key)
-    if provider == "openrouter": return bool(settings.openrouter_api_key)
+    if provider == "openai":     return _is_real_key(settings.openai_api_key)
+    if provider == "anthropic":  return _is_real_key(settings.anthropic_api_key)
+    if provider == "google":     return _is_real_key(settings.google_api_key)
+    if provider == "openrouter": return _is_real_key(settings.openrouter_api_key)
     return False
 
 

@@ -32,6 +32,7 @@
     "@fastify/multipart": "^8.3.0",
     "@fastify/rate-limit": "^9.1.0",
     "@hocuspocus/server": "^4.0.0",
+    "@opensearch-project/opensearch": "^3.0.0",
     "@prisma/client": "^5.16.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.12.0",

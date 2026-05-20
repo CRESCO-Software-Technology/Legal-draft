@@ -1,4 +1,11 @@
-import { Client } from '@elastic/elasticsearch'
+// Use the OpenSearch JS client instead of @elastic/elasticsearch. Bonsai's
+// free sandbox runs OpenSearch 2.x, which rejects the ES-8-specific
+// `application/vnd.elasticsearch+json; compatible-with=8` Content-Type
+// header. The OpenSearch client sends plain JSON, so indexing works against
+// either Elasticsearch or OpenSearch. Their API surface for index/search/
+// indices.{exists,create}/aggs is identical for everything this codebase
+// uses, so the swap is import-only.
+import { Client } from '@opensearch-project/opensearch'
 
 export const es = new Client({
   node: process.env.ELASTICSEARCH_URL ?? 'http://localhost:9200',

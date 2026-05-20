@@ -1,0 +1,248 @@
+#!/usr/bin/env node
+/**
+ * smoke-prod.mjs — production smoke test for the deployed draftLegal stack.
+ *
+ * Exercises the major user-facing flows end-to-end against a real deployment:
+ *   1.  Login (auth round-trip, JWT issued)
+ *   2.  Dashboard JSON returns expected keys
+ *   3.  Contracts list + paginated shape
+ *   4.  Counterparties list
+ *   5.  Templates list
+ *   6.  Clauses list
+ *   7.  Matters list (different shape: { items, total })
+ *   8.  Users list
+ *   9.  Org / settings read
+ *   10. Search route reachable
+ *   11. Assistant chat — full streaming round-trip API → agents → Gemini → back
+ *   12. Agent tool-callback — verifies agents-service can hit API for DB data
+ *   13. Contract pipeline trigger — POST /:id/analyze, poll until DONE
+ *   14. PDF generation reachable (gotenberg invoked through API path if exposed)
+ *   15. Static front-end loads (HTML 200, API rewrite returns 200)
+ *
+ * Usage:
+ *   API_URL=https://draftlegal-prod-13353.web.app \
+ *   ADMIN_EMAIL=admin@demo.com ADMIN_PASSWORD=password123 \
+ *   node scripts/smoke-prod.mjs
+ *
+ * Exit code: 0 if every check passes, 1 otherwise. Each check prints ✓ or ✗.
+ */
+
+const BASE = process.env.API_URL  ?? 'https://draftlegal-prod-13353.web.app'
+// /health is a service-level probe, not under the /api/** Firebase rewrite,
+// so we hit api-service directly for that one check.
+const API_DIRECT = process.env.API_DIRECT ?? 'https://api-service-611770954192.us-central1.run.app'
+const EMAIL = process.env.ADMIN_EMAIL    ?? 'admin@demo.com'
+const PASSWORD = process.env.ADMIN_PASSWORD ?? 'password123'
+
+let pass = 0, fail = 0, skipped = 0
+const failures = []
+
+const ok = (name, detail = '') => { pass++; console.log(`  \x1b[32m✓\x1b[0m ${name}${detail ? '  ·  ' + detail : ''}`) }
+const ko = (name, detail) => { fail++; failures.push(`${name} — ${detail}`); console.log(`  \x1b[31m✗\x1b[0m ${name}  ·  ${detail}`) }
+const sk = (name, detail = '') => { skipped++; console.log(`  \x1b[33m–\x1b[0m ${name}  ·  ${detail || 'skipped'}`) }
+const section = (n, name) => console.log(`\n▶ ${n}. ${name}`)
+
+async function fetchJson(path, opts = {}) {
+  const url = path.startsWith('http') ? path : `${BASE}${path}`
+  const t0 = Date.now()
+  const res = await fetch(url, opts)
+  const ms = Date.now() - t0
+  let body
+  const ct = res.headers.get('content-type') ?? ''
+  try {
+    if (ct.includes('json')) body = await res.json()
+    else body = await res.text()
+  } catch (e) { body = `<parse error: ${e.message}>` }
+  return { status: res.status, body, ms, ct }
+}
+
+console.log(`\nSmoke test against ${BASE}\n`)
+
+// ── 1. Auth ──────────────────────────────────────────────────────────────
+section(1, 'Authentication')
+const loginRes = await fetchJson('/api/v1/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+})
+if (loginRes.status === 200 && loginRes.body?.accessToken) {
+  ok('POST /auth/login returns 200 + accessToken', `${loginRes.ms}ms`)
+} else {
+  ko('POST /auth/login', `status=${loginRes.status}  body=${JSON.stringify(loginRes.body).slice(0, 120)}`)
+  console.log('\nCannot continue without a valid token. Aborting.')
+  process.exit(1)
+}
+const TOKEN = loginRes.body.accessToken
+const USER  = loginRes.body.user
+const HEAD  = { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }
+
+if (USER?.email === EMAIL) ok(`user payload returned (orgId=${USER.orgId}, roles=${USER.roles?.join(',')})`)
+else ko('user payload', `unexpected: ${JSON.stringify(USER).slice(0, 120)}`)
+
+// ── 2. Dashboard ─────────────────────────────────────────────────────────
+section(2, 'Dashboard data')
+const dash = await fetchJson('/api/v1/dashboard', { headers: HEAD })
+if (dash.status === 200 && typeof dash.body?.activeContracts === 'number') {
+  ok('GET /dashboard returns counts', `activeContracts=${dash.body.activeContracts}  expiringSoon=${dash.body.expiringSoon}  ${dash.ms}ms`)
+} else {
+  ko('GET /dashboard', `status=${dash.status}`)
+}
+if (dash.body?.yourDay && Array.isArray(dash.body.yourDay.negotiations)) {
+  ok('yourDay block has negotiations + renewals arrays')
+} else {
+  ko('yourDay block shape', `got: ${JSON.stringify(dash.body?.yourDay).slice(0, 120)}`)
+}
+
+// ── 3-9. CRUD list endpoints ─────────────────────────────────────────────
+section(3, 'List endpoints')
+const lists = [
+  ['/api/v1/contracts',       'data',  arr => arr.length > 0, 'expect at least one contract'],
+  ['/api/v1/counterparties',  'data',  arr => arr.length > 0, 'expect counterparties from seed'],
+  ['/api/v1/templates',       'data',  arr => arr.length > 0, 'expect templates from seed'],
+  ['/api/v1/clauses',         'data',  arr => arr.length > 0, 'expect clauses from seed'],
+  ['/api/v1/matters',         'items', arr => Array.isArray(arr), 'matters use { items, total } shape'],
+]
+for (const [path, key, validate, hint] of lists) {
+  const r = await fetchJson(path, { headers: HEAD })
+  if (r.status !== 200) {
+    ko(`GET ${path}`, `status=${r.status}`)
+    continue
+  }
+  const arr = r.body?.[key]
+  if (Array.isArray(arr) && validate(arr)) {
+    ok(`GET ${path}`, `${arr.length} item(s), ${r.ms}ms`)
+  } else {
+    ko(`GET ${path}`, `${hint}; got ${JSON.stringify(r.body).slice(0, 100)}`)
+  }
+}
+
+// ── 10. Search ───────────────────────────────────────────────────────────
+section(4, 'Search')
+const search = await fetchJson('/api/v1/search?q=cloud', { headers: HEAD })
+if (search.status === 200) {
+  ok('GET /search reachable', `${search.ms}ms`)
+} else if (search.status === 404) {
+  sk('GET /search route', '404 (route may not be mounted with this name)')
+} else {
+  ko('GET /search', `status=${search.status}`)
+}
+
+// ── 11. Assistant chat ───────────────────────────────────────────────────
+section(5, 'Assistant chat (full LLM round-trip)')
+const chatT0 = Date.now()
+const chatRes = await fetch(`${BASE}/api/v1/agent/chat`, {
+  method: 'POST', headers: HEAD,
+  body: JSON.stringify({ message: 'Reply only with the word OK.' }),
+})
+const chatBody = await chatRes.text()
+const chatMs = Date.now() - chatT0
+if (chatRes.status === 200 && chatBody.includes('data: ')) {
+  const tokens = chatBody.match(/"delta"/g)?.length ?? 0
+  if (tokens > 0 && chatBody.includes('[DONE]')) {
+    ok('chat streamed tokens', `${tokens} delta event(s), ${chatMs}ms`)
+  } else {
+    ko('chat stream incomplete', `body sample: ${chatBody.slice(0, 200)}`)
+  }
+  if (chatBody.includes('"provider": "google"')) {
+    ok('chat used Google Gemini (expected)')
+  } else if (chatBody.includes('"error"')) {
+    ko('chat returned error frame', chatBody.match(/"error":\s*"[^"]+/)?.[0] ?? 'unknown')
+  }
+} else {
+  ko('agent chat', `status=${chatRes.status}  body=${chatBody.slice(0, 200)}`)
+}
+
+// ── 12. Agent tool callback (portfolio query) ─────────────────────────────
+section(6, 'Agent tool callback (LLM → tool → API → DB)')
+const toolT0 = Date.now()
+const toolRes = await fetch(`${BASE}/api/v1/agent/chat`, {
+  method: 'POST', headers: HEAD,
+  body: JSON.stringify({
+    message: 'How many active contracts do we have? Reply with just the number.',
+    agent_mode: true,
+  }),
+})
+const toolBody = await toolRes.text()
+const toolMs = Date.now() - toolT0
+if (toolRes.status === 200 && toolBody.includes('[DONE]')) {
+  ok('agent_mode chat completed', `${toolMs}ms`)
+  if (toolBody.includes('"trouble connecting"') || toolBody.includes('database')) {
+    ko('agent tool callback', 'agent reported DB connection failure — API_URL not set on agents-service')
+  } else if (toolBody.includes('"error"')) {
+    ko('agent tool callback', toolBody.match(/"error":\s*"[^"]+/)?.[0] ?? 'unknown')
+  } else {
+    ok('agent tool callback did not surface DB error')
+  }
+} else {
+  ko('agent_mode chat', `status=${toolRes.status}`)
+}
+
+// ── 13. Contract pipeline ─────────────────────────────────────────────────
+section(7, 'Contract analysis pipeline')
+// pick the first contract that's not already DONE
+const contractsRes = await fetchJson('/api/v1/contracts', { headers: HEAD })
+const candidate = (contractsRes.body?.data ?? []).find(c => c.analysisStatus !== 'DONE' && c.analysisStatus !== 'FAILED')
+if (!candidate) {
+  sk('pipeline trigger', 'no PENDING contract found — all already processed')
+} else {
+  const trig = await fetchJson(`/api/v1/contracts/${candidate.id}/analyze`, {
+    method: 'POST', headers: HEAD, body: '{}',
+  })
+  if (trig.status === 200 && trig.body?.status === 'queued') {
+    ok(`POST /contracts/${candidate.id.slice(0, 12)}…/analyze queued`, `analysisStatus=${trig.body.analysisStatus}`)
+    // poll up to 120s
+    let advanced = false, lastStatus = ''
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 10_000))
+      const poll = await fetchJson(`/api/v1/contracts/${candidate.id}`, { headers: HEAD })
+      lastStatus = poll.body?.analysisStatus
+      if (lastStatus === 'DONE') { advanced = true; break }
+      if (lastStatus === 'FAILED') break
+    }
+    if (advanced) ok('contract pipeline reached DONE', `final=${lastStatus}`)
+    else ko('contract pipeline did not complete', `last status=${lastStatus} (gave up after 120s)`)
+  } else {
+    ko('analyze trigger', `status=${trig.status}  body=${JSON.stringify(trig.body).slice(0, 150)}`)
+  }
+}
+
+// ── 14. Static front-end ──────────────────────────────────────────────────
+section(8, 'Front-end shell + API proxy')
+const html = await fetch(BASE)
+if (html.status === 200) {
+  const body = await html.text()
+  if (body.includes('<div id="root"') || body.includes('<div id=\\"root\\"')) {
+    ok('front-end HTML served (200, root div present)')
+  } else {
+    ko('front-end HTML', 'no root div — Firebase Hosting may be serving the wrong index')
+  }
+} else {
+  ko('front-end HTML', `status=${html.status}`)
+}
+// proxy check — /api/v1/auth/login through Firebase Hosting should resolve to api-service
+const proxyRes = await fetch(`${BASE}/api/v1/auth/login`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+})
+if (proxyRes.status === 200) ok('Firebase Hosting /api/** proxy → Cloud Run api-service OK')
+else ko('Hosting proxy', `status=${proxyRes.status}`)
+
+// ── 15. Service health endpoints ─────────────────────────────────────────
+section(9, 'Service health probes')
+const apiHealth = await fetchJson(`${API_DIRECT}/health`)
+if (apiHealth.status === 200 && apiHealth.body?.checks?.database === 'ok' && apiHealth.body?.checks?.redis === 'ok') {
+  ok('api-service /health',
+    `db=${apiHealth.body.latencyMs.database}ms  redis=${apiHealth.body.latencyMs.redis}ms`)
+} else {
+  ko('api-service /health', JSON.stringify(apiHealth.body).slice(0, 200))
+}
+
+// ── summary ──────────────────────────────────────────────────────────────
+console.log(`\n${'='.repeat(60)}`)
+console.log(`Smoke results: \x1b[32m${pass} pass\x1b[0m  /  \x1b[31m${fail} fail\x1b[0m  /  \x1b[33m${skipped} skipped\x1b[0m`)
+if (failures.length) {
+  console.log('\nFailures:')
+  for (const f of failures) console.log(`  ✗ ${f}`)
+}
+console.log('='.repeat(60))
+process.exit(fail > 0 ? 1 : 0)

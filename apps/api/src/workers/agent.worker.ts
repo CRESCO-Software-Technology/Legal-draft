@@ -56,7 +56,7 @@ async function handleDetectBinder(data: DetectBinderJob): Promise<void> {
 
   const res = await fetch(`${AGENTS_URL}/detect-binder`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
     body:    JSON.stringify({ plainText: version.plainText }),
   })
   if (!res.ok) {
@@ -193,7 +193,7 @@ async function handleClassifyDocument(data: ClassifyDocumentJob): Promise<void> 
 
   const res = await fetch(`${AGENTS_URL}/classify`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
     body:    JSON.stringify({ plainText: version.plainText }),
   })
   if (!res.ok) {
@@ -281,7 +281,7 @@ async function handleExtractAi(data: ExtractAiJob): Promise<void> {
 
   const res = await fetch(`${AGENTS_URL}/review`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
     body: JSON.stringify(body),
   })
 
@@ -307,7 +307,7 @@ async function handleClassifyRequest(data: ClassifyRequestJob): Promise<void> {
 
   const res = await fetch(`${AGENTS_URL}/intake-classify`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
     body:    JSON.stringify({
       title:           request.title,
       description:     request.description,
@@ -352,7 +352,7 @@ async function handleRedlineAnalysis(data: RedlineAnalysisJob): Promise<void> {
 
   const res = await fetch(`${AGENTS_URL}/redline`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
     body:    JSON.stringify({ contractId, v1Id, v2Id, orgId, userId, contractType }),
   })
   if (!res.ok) {

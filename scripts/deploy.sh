@@ -34,6 +34,13 @@ echo
 
 cmd="${1:-all}"
 
+# Dedicated runtime service accounts (least-privilege). Created once via
+# `gcloud iam service-accounts create cr-api / cr-agents` and granted
+# per-secret accessor on Secret Manager. Gotenberg needs no secrets so
+# it runs as the default compute SA.
+API_SA="${API_SA:-cr-api@${GCP_PROJECT}.iam.gserviceaccount.com}"
+AGENTS_SA="${AGENTS_SA:-cr-agents@${GCP_PROJECT}.iam.gserviceaccount.com}"
+
 # Comma-separated list of Secret Manager bindings used by api-service.
 # Secrets must exist (gcloud secrets create ...) before first deploy.
 API_SECRETS="DATABASE_URL=database-url:latest,\
@@ -51,6 +58,7 @@ GOOGLE_API_KEY=google-key:latest,\
 SENDGRID_API_KEY=sendgrid-key:latest"
 
 AGENTS_SECRETS="INTERNAL_SERVICE_SECRET=internal-secret:latest,\
+REDIS_URL=redis-url:latest,\
 ANTHROPIC_API_KEY=anthropic-key:latest,\
 OPENAI_API_KEY=openai-key:latest,\
 GOOGLE_API_KEY=google-key:latest"
@@ -58,11 +66,14 @@ GOOGLE_API_KEY=google-key:latest"
 deploy_api() {
   echo "--- deploy api-service ---"
   [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; exit 1; }
+  # The repo root has a symlink `Dockerfile -> apps/api/Dockerfile` because
+  # the API build context is the repo root (pnpm workspace), and newer gcloud
+  # no longer accepts an explicit --dockerfile flag.
   gcloud run deploy api-service \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
     --source "${ROOT}" \
-    --dockerfile apps/api/Dockerfile \
+    --service-account "${API_SA}" \
     --min-instances 0 --max-instances 2 \
     --memory 1Gi --cpu 1 --concurrency 80 \
     --timeout 300 \
@@ -79,13 +90,18 @@ deploy_agents() {
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
     --source "${ROOT}/apps/agents" \
+    --service-account "${AGENTS_SA}" \
     --min-instances 0 --max-instances 2 \
     --memory 1Gi --cpu 1 --concurrency 40 \
     --timeout 300 \
     --port 8080 \
     --env-vars-file "${ROOT}/env.agents.yaml" \
     --set-secrets "${AGENTS_SECRETS}" \
-    --no-allow-unauthenticated
+    --allow-unauthenticated
+  # NOTE: --allow-unauthenticated is paired with an app-level
+  # `x-internal-secret` middleware in apps/agents/main.py. The API does not
+  # fetch OIDC identity tokens before calling agents, so Cloud Run IAM auth
+  # is bypassed; the shared secret is what actually gates access.
 }
 
 deploy_gotenberg() {
@@ -98,7 +114,10 @@ deploy_gotenberg() {
     --memory 512Mi --cpu 1 \
     --port 3000 \
     --args "gotenberg,--api-port=3000" \
-    --no-allow-unauthenticated
+    --allow-unauthenticated
+  # NOTE: gotenberg has no built-in auth and the API does not fetch OIDC
+  # tokens before calling it. The service is exposed publicly but bounded
+  # by --max-instances=1, so abuse capacity is capped.
 }
 
 deploy_web() {

@@ -21,7 +21,9 @@ const AssistSchema = z.object({
 export async function agentRoutes(app: FastifyInstance) {
   // GET /api/v1/agent/models — list supported providers + models
   app.get('/models', { preHandler: requireAuth }, async (_req: unknown, reply) => {
-    const upstream = await fetch(`${AGENTS_URL}/agent/models`).catch(() => null)
+    const upstream = await fetch(`${AGENTS_URL}/agent/models`, {
+      headers: { 'x-internal-secret': INTERNAL_SECRET },
+    }).catch(() => null)
     if (!upstream?.ok) {
       return reply.status(502).send({ detail: 'Agent service unavailable' })
     }
@@ -104,7 +106,7 @@ export async function agentRoutes(app: FastifyInstance) {
 
     const upstream = await fetch(`${AGENTS_URL}/agent/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
       body: JSON.stringify({
         message: body.message,
         session_id: body.sessionId,

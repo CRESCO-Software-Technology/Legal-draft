@@ -1040,7 +1040,7 @@ function MessageBubble({
         {onChipSelect && (chips.length > 0 || message.streaming) && (
           <ChipRow
             chips={chips}
-            onSelect={onChipSelect}
+            onSelect={(chip) => onChipSelect(chip.label)}
             disabled={streaming}
             streaming={!!message.streaming}
           />

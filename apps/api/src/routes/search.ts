@@ -239,7 +239,7 @@ export async function searchRoutes(app: FastifyInstance) {
       `${process.env.AGENTS_URL ?? 'http://localhost:8000'}/agent/ask`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
         body: JSON.stringify({ question, orgId, clauseMatches }),
       },
     ).catch(() => null)
@@ -262,7 +262,7 @@ export async function searchRoutes(app: FastifyInstance) {
       `${process.env.AGENTS_URL ?? 'http://localhost:8000'}/agent/portfolio-query`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
         body: JSON.stringify({ query, orgId, userId }),
       },
     ).catch(() => null)

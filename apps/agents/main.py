@@ -1,6 +1,8 @@
 import logging
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.routes import chat
 from app.routes import review
 from app.routes import agent
@@ -37,6 +39,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_internal_secret(request: Request, call_next):
+    """Gate every request behind the shared service-to-service secret.
+
+    Cloud Run can be set to --allow-unauthenticated so the API (which doesn't
+    fetch OIDC identity tokens) can reach this service, while this middleware
+    still rejects any caller that doesn't know the shared secret. /health is
+    exempt so Cloud Run's startup probe still works.
+    """
+    if request.url.path in ("/health", "/"):
+        return await call_next(request)
+    expected = os.environ.get("INTERNAL_SERVICE_SECRET", "")
+    if not expected:
+        # Fail closed if the env var is missing — refuse all requests rather
+        # than silently letting anyone through.
+        return JSONResponse({"error": "agents service is misconfigured"}, status_code=503)
+    if request.headers.get("x-internal-secret") != expected:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
 
 app.include_router(chat.router, prefix="/agent")
 app.include_router(review.router)
