@@ -242,6 +242,72 @@ if (uploadRes.status === 201 && uploadBody?.id) {
   ko('POST /contracts/upload', `status=${uploadRes.status}  body=${JSON.stringify(uploadBody).slice(0, 200)}`)
 }
 
+// ── 13c. Search facets + advanced search (ES read after write) ───────────
+section(7.6, 'Search facets + advanced (ES read path)')
+const facets = await fetchJson('/api/v1/search/facets', { headers: HEAD })
+if (facets.status === 200 && facets.body?.types) {
+  ok('GET /search/facets', `${(facets.body.types ?? []).length} types, total=${facets.body.total}, ${facets.ms}ms`)
+} else {
+  ko('GET /search/facets', `status=${facets.status}  body=${JSON.stringify(facets.body).slice(0, 150)}`)
+}
+
+const adv = await fetch(`${BASE}/api/v1/search`, {
+  method: 'POST', headers: HEAD,
+  body: JSON.stringify({ q: 'agreement' }),
+})
+const advBody = await adv.json().catch(() => null)
+// POST /search returns { data: Contract[], total: number, source: 'elasticsearch' | 'database' }
+if (adv.status === 200 && Array.isArray(advBody?.data)) {
+  ok('POST /search keyword query', `${advBody.data.length} hit(s) of ${advBody.total}, source=${advBody.source ?? 'unknown'}`)
+} else {
+  ko('POST /search', `status=${adv.status}  body=${JSON.stringify(advBody).slice(0, 150)}`)
+}
+
+// ── 13d. Contract CRUD round-trip ────────────────────────────────────────
+section(7.7, 'Contract CRUD round-trip')
+// Use the contract we just uploaded
+if (uploadBody?.id) {
+  // GET
+  const got = await fetchJson(`/api/v1/contracts/${uploadBody.id}`, { headers: HEAD })
+  if (got.status === 200 && got.body?.id === uploadBody.id) ok('GET /contracts/:id')
+  else ko('GET /contracts/:id', `status=${got.status}`)
+  // PATCH
+  const patch = await fetch(`${BASE}/api/v1/contracts/${uploadBody.id}`, {
+    method: 'PATCH', headers: HEAD,
+    body: JSON.stringify({ title: `Smoke renamed ${Date.now()}` }),
+  })
+  if (patch.status === 200) ok('PATCH /contracts/:id (title update)')
+  else ko('PATCH /contracts/:id', `status=${patch.status}`)
+  // DELETE — Fastify rejects DELETE with Content-Type: application/json and
+  // empty body (FST_ERR_CTP_EMPTY_JSON_BODY); send only the Authorization
+  // header to match how axios issues DELETE from the front-end.
+  const del = await fetch(`${BASE}/api/v1/contracts/${uploadBody.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  })
+  if (del.status === 200 || del.status === 204) ok('DELETE /contracts/:id (soft delete)')
+  else ko('DELETE /contracts/:id', `status=${del.status}`)
+} else {
+  sk('contract CRUD', 'no uploaded contract id to operate on')
+}
+
+// ── 13e. Counterparty + Template existence checks ────────────────────────
+section(7.8, 'Counterparty + Template detail fetch')
+const cpList = await fetchJson('/api/v1/counterparties', { headers: HEAD })
+const someCp = cpList.body?.data?.[0]
+if (someCp?.id) {
+  const cp = await fetchJson(`/api/v1/counterparties/${someCp.id}`, { headers: HEAD })
+  if (cp.status === 200 && cp.body?.id === someCp.id) ok(`GET /counterparties/${someCp.id.slice(0,8)}…`)
+  else ko('GET /counterparties/:id', `status=${cp.status}`)
+}
+const tplList = await fetchJson('/api/v1/templates', { headers: HEAD })
+const someTpl = tplList.body?.data?.[0]
+if (someTpl?.id) {
+  const tpl = await fetchJson(`/api/v1/templates/${someTpl.id}`, { headers: HEAD })
+  if (tpl.status === 200 && tpl.body?.id === someTpl.id) ok(`GET /templates/${someTpl.id.slice(0,8)}…`)
+  else ko('GET /templates/:id', `status=${tpl.status}`)
+}
+
 // ── 14. Static front-end ──────────────────────────────────────────────────
 section(8, 'Front-end shell + API proxy')
 const html = await fetch(BASE)
