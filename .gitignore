@@ -13,9 +13,13 @@ out/
 .env.*
 !.env.example
 
-# Cloud Run env-vars files — real values live here, examples are tracked
-env.api.yaml
-env.agents.yaml
+# Cloud Run env-vars files are tracked. They contain only non-secret
+# config (URLs, feature flags). Real secrets come from Google Secret
+# Manager via --set-secrets in scripts/deploy.sh.
+# (env.api.yaml + env.agents.yaml are committed.)
+# GitHub Actions deployer JSON key emitted by setup-github-deployer.sh —
+# never commit this; it can deploy to prod.
+github-deployer-key.json
 
 # Firebase build artefacts / cache
 .firebase/
