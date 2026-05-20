@@ -70,3 +70,6 @@ blob-report/
 scripts/screenshots/
 scripts/audit-screenshots/
 scripts/persona-tests/output/
+
+# UI smoke screenshots (regenerated each run)
+scripts/screenshots/smoke-ui/

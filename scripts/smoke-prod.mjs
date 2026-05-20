@@ -308,6 +308,77 @@ if (someTpl?.id) {
   else ko('GET /templates/:id', `status=${tpl.status}`)
 }
 
+// ── 7.9. Read-sweep across every major feature surface ──────────────────
+section(7.9, 'Read sweep — every major feature surface')
+// path, label, optional success predicate on the parsed body
+const sweep = [
+  ['/api/v1/users/me',                  'current user'],
+  ['/api/v1/team/workload',             'team workload'],
+  ['/api/v1/organization',              'organization profile'],
+  ['/api/v1/agent/threads',             'agent chat threads'],
+  ['/api/v1/skills',                    'agent skills catalog'],
+  ['/api/v1/field-definitions',         'custom field defs'],
+  ['/api/v1/review-queue',              'review queue'],
+  ['/api/v1/playbook/positions',        'playbook positions'],
+  ['/api/v1/approvals/my-queue',        'approvals · my queue'],
+  ['/api/v1/approvals/all',             'approvals · org-wide'],
+  ['/api/v1/approvals/workflows',       'approval workflows'],
+  ['/api/v1/approvals/notifications',   'approval notifications'],
+  ['/api/v1/signature-requests',        'signature requests list'],
+  ['/api/v1/obligations',               'obligations queue'],
+  ['/api/v1/renewals',                  'renewals queue'],
+  ['/api/v1/invoices',                  'invoices'],
+  ['/api/v1/admin/ai/settings',         'admin · AI settings'],
+  ['/api/v1/admin/ai/keys',             'admin · AI key inventory'],
+  ['/api/v1/admin/ai/usage',            'admin · AI usage'],
+]
+for (const [path, label] of sweep) {
+  const r = await fetchJson(path, { headers: HEAD })
+  if (r.status === 200) {
+    ok(`GET ${label}`, `${r.ms}ms  ${path}`)
+  } else if (r.status === 403) {
+    sk(`GET ${label}`, `403 — admin user lacks permission for ${path}`)
+  } else {
+    ko(`GET ${label}`, `status=${r.status}  ${path}  body=${JSON.stringify(r.body).slice(0, 100)}`)
+  }
+}
+
+// ── 7.10. Comment add → list round-trip ──────────────────────────────────
+section(7.10, 'Comments add → list round-trip')
+const listForComment = await fetchJson('/api/v1/contracts?limit=5', { headers: HEAD })
+const cTarget = listForComment.body?.data?.[0]
+if (cTarget?.id) {
+  const add = await fetch(`${BASE}/api/v1/contracts/${cTarget.id}/comments`, {
+    method: 'POST', headers: HEAD,
+    body: JSON.stringify({ body: `Smoke test comment ${Date.now()}` }),
+  })
+  const addBody = await add.json().catch(() => null)
+  if ((add.status === 200 || add.status === 201) && addBody?.id) {
+    ok('POST /contracts/:id/comments', `id=${addBody.id.slice(0, 12)}…`)
+    const got = await fetchJson(`/api/v1/contracts/${cTarget.id}/comments`, { headers: HEAD })
+    const found = JSON.stringify(got.body ?? []).includes(addBody.id)
+    if (found) ok('new comment appears in GET /comments')
+    else ko('comment missing from list', `id ${addBody.id}`)
+  } else {
+    ko('POST /comments', `status=${add.status}  body=${JSON.stringify(addBody).slice(0, 150)}`)
+  }
+} else {
+  sk('comments', 'no contract available')
+}
+
+// ── 7.11. Versions list (Prisma + S3 mirror) ──────────────────────────────
+section(7.11, 'Versions list')
+if (cTarget?.id) {
+  const v = await fetchJson(`/api/v1/contracts/${cTarget.id}/versions`, { headers: HEAD })
+  if (v.status === 200 && Array.isArray(v.body)) {
+    ok('GET /contracts/:id/versions', `${v.body.length} version(s)`)
+  } else if (v.status === 200 && Array.isArray(v.body?.data)) {
+    ok('GET /contracts/:id/versions', `${v.body.data.length} version(s)`)
+  } else {
+    ko('GET /contracts/:id/versions', `status=${v.status}  shape=${JSON.stringify(v.body).slice(0, 100)}`)
+  }
+}
+
 // ── 14. Static front-end ──────────────────────────────────────────────────
 section(8, 'Front-end shell + API proxy')
 const html = await fetch(BASE)
