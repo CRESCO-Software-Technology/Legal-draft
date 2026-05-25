@@ -12,6 +12,7 @@ import { toast } from '@/components/common/Toaster'
 import { Button } from '@/components/ui/button'
 import { UploadModal } from '@/components/contracts/UploadModal'
 import { NewRequestModal } from '@/components/requests/NewRequestModal'
+import { WelcomeChecklist } from '@/components/onboarding/WelcomeChecklist'
 // U.4.2 — HeroAgent deleted. The right Ask rail is the AI surface on dashboard.
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -204,6 +205,11 @@ export function DashboardPage() {
           Here's what's happening with your contracts today.
         </p>
       </div>
+
+      {/* Welcome checklist — surfaces deferred onboarding tasks for admins
+          who finished the 2-step wizard. Auto-hides when complete or
+          dismissed; persists dismissal to org.settings. */}
+      <WelcomeChecklist />
 
       {/* D.2.1 — Hero agent. Hidden behind AGENT_SIDE_PANEL_V2 flag.
           Above Your Day because "what can I ask AI to do" is the new
