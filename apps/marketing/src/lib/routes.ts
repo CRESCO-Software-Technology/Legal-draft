@@ -42,13 +42,28 @@ export const industrySlugs = [
   'logistics',
 ] as const
 
+export const compareSlugs = [
+  'ironclad',
+  'harvey',
+  'spellbook',
+  'docusign-clm',
+  'icertis',
+] as const
+
 export const allRoutes: RouteDef[] = [
-  { path: '/', title: 'Open-source, agent-first CLM', description: 'Open-source contract lifecycle management with 12 AI agents. Self-host the full platform under MIT.', priority: 1.0 },
+  { path: '/', title: 'Open-source, agent-first CLM', description: 'MIT-licensed contract lifecycle management with 12 AI agents. Read the code, self-host the same platform we run.', priority: 1.0 },
   { path: '/product', title: 'Product', description: 'Tour the full lifecycle: intake, drafting, negotiation, approval, signature, obligations.', priority: 0.9 },
   { path: '/security', title: 'Security', description: 'Self-host story, RBAC, audit log, encryption, AI safety, compliance roadmap.', priority: 0.9 },
-  { path: '/pricing', title: 'Pricing', description: 'Free, MIT-licensed, self-hosted. Managed cloud later, when we have traction and real SLAs.', priority: 0.9 },
+  { path: '/pricing', title: 'Pricing', description: 'Free, MIT-licensed, self-hosted. Free hosted demo for evaluation. Managed cloud once we have traction.', priority: 0.9 },
   { path: '/open-source', title: 'Open Source', description: 'MIT-licensed CLM you can read, audit, and run anywhere. Three-step self-host quickstart.', priority: 0.9 },
   { path: '/contact', title: 'Contact', description: 'Talk to the draftLegal team about your contract operations.', priority: 0.5 },
+  { path: '/alternatives', title: 'CLM Alternatives', description: 'Neutral comparisons against Ironclad, Harvey, Spellbook, DocuSign CLM, and Icertis — only publicly verifiable claims.', priority: 0.8 },
+  ...compareSlugs.map((slug) => ({
+    path: `/compare/${slug}`,
+    title: `draftLegal vs ${slug}`,
+    description: `Neutral comparison: draftLegal vs ${slug}. Openness, deployment posture, AI extensibility — only publicly verifiable rows.`,
+    priority: 0.8,
+  })),
   ...industrySlugs.map((slug) => ({
     path: `/industries/${slug}`,
     title: `CLM for ${slug}`,

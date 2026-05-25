@@ -31,6 +31,36 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://draft-legal.com/alternatives</loc>
+    <lastmod>2026-05-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://draft-legal.com/compare/ironclad</loc>
+    <lastmod>2026-05-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://draft-legal.com/compare/harvey</loc>
+    <lastmod>2026-05-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://draft-legal.com/compare/spellbook</loc>
+    <lastmod>2026-05-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://draft-legal.com/compare/docusign-clm</loc>
+    <lastmod>2026-05-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://draft-legal.com/compare/icertis</loc>
+    <lastmod>2026-05-25</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://draft-legal.com/industries/saas</loc>
     <lastmod>2026-05-25</lastmod>
     <priority>0.7</priority>

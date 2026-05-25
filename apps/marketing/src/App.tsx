@@ -10,6 +10,8 @@ import Security from '@/routes/Security'
 import Pricing from '@/routes/Pricing'
 import OpenSource from '@/routes/OpenSource'
 import Contact from '@/routes/Contact'
+import Alternatives from '@/routes/Alternatives'
+import ComparePage from '@/routes/compare/ComparePage'
 import LearnHub from '@/routes/learn/LearnHub'
 import LearnArticle from '@/routes/learn/LearnArticle'
 import TemplatesHub from '@/routes/templates/TemplatesHub'
@@ -39,6 +41,8 @@ export default function App() {
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/open-source" element={<OpenSource />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/alternatives" element={<Alternatives />} />
+          <Route path="/compare/:slug" element={<ComparePage />} />
           <Route path="/learn" element={<LearnHub />} />
           <Route path="/learn/:slug" element={<LearnArticle />} />
           <Route path="/templates" element={<TemplatesHub />} />

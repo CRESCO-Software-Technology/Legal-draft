@@ -11,14 +11,16 @@ const routesModule = await import(resolve(root, 'src/lib/routes.ts')).catch(asyn
   const { readFileSync } = await import('node:fs')
   const src = readFileSync(resolve(root, 'src/lib/routes.ts'), 'utf8')
   const paths = [...src.matchAll(/path:\s*['"`](\/[^'"`]*)['"`]/g)].map((m) => m[1])
-  // Synthesize learn/template/industry paths
+  // Synthesize learn/template/industry/compare paths
   const learnSlugs = ['contract-lifecycle-management','ai-contract-review','ai-contract-drafting','contract-redlining','clause-library','contract-repository','contract-approval-workflow','contract-renewal-tracking','obligation-management','electronic-signature','nda','msa','dpa','baa','sow']
   const templateSlugs = ['nda','msa','dpa','baa','sow','employment-agreement','mta']
   const industrySlugs = ['saas','healthcare','manufacturing','biotech','logistics']
+  const compareSlugs = ['ironclad','harvey','spellbook','docusign-clm','icertis']
   const all = new Set(paths)
   learnSlugs.forEach((s) => all.add(`/learn/${s}`))
   templateSlugs.forEach((s) => all.add(`/templates/${s}`))
   industrySlugs.forEach((s) => all.add(`/industries/${s}`))
+  compareSlugs.forEach((s) => all.add(`/compare/${s}`))
   return { allRoutes: [...all].map((path) => ({ path })) }
 })
 

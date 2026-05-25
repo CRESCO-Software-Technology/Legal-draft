@@ -4,7 +4,7 @@ import { Menu, X, Github } from 'lucide-react'
 import { Logo } from './Logo'
 import { Button } from '@/components/ui/button'
 import { APP_URL, GITHUB_URL, cn } from '@/lib/utils'
-import { learnSlugs, industrySlugs } from '@/lib/routes'
+import { compareSlugs, learnSlugs, industrySlugs } from '@/lib/routes'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
@@ -62,14 +62,29 @@ export function Nav() {
             <button className="flex items-center gap-1 text-sm font-medium text-slate-700 hover:text-slate-900">
               Solutions
             </button>
-            <div className="invisible absolute left-1/2 top-full z-50 w-[320px] -translate-x-1/2 pt-3 opacity-0 transition-all group-hover:visible group-hover:opacity-100">
-              <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  By industry
+            <div className="invisible absolute left-1/2 top-full z-50 w-[640px] -translate-x-1/2 pt-3 opacity-0 transition-all group-hover:visible group-hover:opacity-100">
+              <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                <div>
+                  <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    By industry
+                  </div>
+                  {industrySlugs.map((s) => (
+                    <MegaItem key={s} to={`/industries/${s}`} label={`CLM for ${titleCase(s)}`} />
+                  ))}
                 </div>
-                {industrySlugs.map((s) => (
-                  <MegaItem key={s} to={`/industries/${s}`} label={`CLM for ${titleCase(s)}`} />
-                ))}
+                <div>
+                  <div className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Compare
+                  </div>
+                  {compareSlugs.map((s) => (
+                    <MegaItem
+                      key={s}
+                      to={`/compare/${s}`}
+                      label={`vs ${titleCase(s.replace('docusign-clm', 'DocuSign CLM'))}`}
+                    />
+                  ))}
+                  <MegaItem to="/alternatives" label="All alternatives →" />
+                </div>
               </div>
             </div>
           </div>
@@ -144,6 +159,7 @@ export function Nav() {
               ['Product', '/product'],
               ['Pricing', '/pricing'],
               ['Open Source', '/open-source'],
+              ['Compare', '/alternatives'],
               ['Learn', '/learn'],
               ['Templates', '/templates'],
               ['Industries', '/industries'],
