@@ -36,23 +36,26 @@ export function Hero() {
           12 AI agents handle intake, drafting, negotiation, approval, signature, and obligations —
           across the full contract lifecycle.{' '}
           <span className="text-slate-900">
-            Run it yourself, or use our managed cloud.
+            MIT-licensed, self-host the same code we run.
           </span>
         </p>
 
         <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button asChild size="lg">
-            <a href={`${APP_URL}/register`}>
-              Start free <ArrowRight className="ml-1.5 h-4 w-4" />
-            </a>
-          </Button>
           <Button asChild size="lg" variant="outline">
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">
               <Github className="mr-2 h-4 w-4" />
-              View on GitHub
+              Self-host on GitHub
+            </a>
+          </Button>
+          <Button asChild size="lg" variant="ghost">
+            <a href={`${APP_URL}/register`}>
+              Try the public demo <ArrowRight className="ml-1.5 h-4 w-4" />
             </a>
           </Button>
         </div>
+        <p className="mt-3 text-center text-xs text-slate-500">
+          Demo runs on free-tier infrastructure — evaluation only, not for production data.
+        </p>
 
         <div className="mx-auto mt-12 grid max-w-3xl grid-cols-3 gap-6 border-t border-slate-200 pt-10 text-center">
           <div>
@@ -72,7 +75,7 @@ export function Hero() {
         <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-500">
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Self-host or managed cloud
+            MIT licensed
           </span>
           <span>·</span>
           <span className="flex items-center gap-1.5">

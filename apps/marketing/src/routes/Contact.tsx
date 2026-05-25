@@ -165,7 +165,7 @@ export default function Contact() {
                         value={form.message}
                         onChange={(e) => setForm({ ...form, message: e.target.value })}
                         className="input-field"
-                        placeholder="We process ~150 NDAs and MSAs/quarter and looking to consolidate. Curious how Draft Legal compares to Ironclad."
+                        placeholder="We process ~150 NDAs and MSAs/quarter and we are looking at draftLegal to consolidate the workflow."
                       />
                     </Field>
 

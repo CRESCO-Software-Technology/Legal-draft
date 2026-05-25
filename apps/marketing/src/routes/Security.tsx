@@ -11,7 +11,7 @@ const sections = [
   {
     icon: KeyRound,
     title: 'Authentication & authorization',
-    body: 'JWT (RS256) with 15-minute access tokens and 7-day refresh. SAML / OIDC SSO on Cloud Team and above. Authorization is enforced server-side as {action × resource × scope} triples — there are no client-only checks.',
+    body: 'JWT (RS256) with 15-minute access tokens and 7-day refresh. SAML / OIDC SSO stubs are wired in the UI; full IdP integration is on the roadmap. Authorization is enforced server-side as {action × resource × scope} triples — there are no client-only checks.',
   },
   {
     icon: ShieldCheck,
@@ -26,7 +26,7 @@ const sections = [
   {
     icon: Lock,
     title: 'Encryption',
-    body: 'TLS 1.3 in transit. AES-256 at rest. Customer-managed keys (BYOK) on Enterprise. Document storage on S3 / MinIO with versioning and immutability options.',
+    body: 'TLS 1.3 in transit. AES-256 at rest. Bring-your-own-key (BYOK) for AI provider credentials, encrypted with an org-specific master key. Document storage on S3 / MinIO / GCS — versioning and immutability supported by the underlying backend.',
   },
   {
     icon: AlertTriangle,

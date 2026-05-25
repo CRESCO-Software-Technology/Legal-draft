@@ -15,7 +15,7 @@ const pillars = [
   {
     icon: Server,
     title: 'Run it your way',
-    body: 'Self-host on your infra in 3 commands, or use our managed cloud. Same code either way — cloud earns its keep on operations, not crippled OSS.',
+    body: 'Self-host on your infra in 3 commands. Same image, same agents, same UI — yours to deploy in your VPC. No commercial-only modules.',
   },
 ]
 
@@ -35,9 +35,8 @@ export function OpenSourceBlock() {
             The GitLab playbook, for contracts.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-slate-300">
-            Same model as GitLab, Mattermost, and Sentry: open core you can read and run, with a
-            managed cloud for teams that want operational guarantees instead of running their own
-            infra.
+            Same model as GitLab, Mattermost, and Sentry: MIT-licensed core you can read and run.
+            No feature gating, no commercial-only modules. Fork it, audit it, ship it.
           </p>
         </div>
         <ul className="mt-14 grid gap-6 md:grid-cols-3">

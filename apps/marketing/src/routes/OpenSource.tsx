@@ -19,7 +19,7 @@ export default function OpenSource() {
     <>
       <SEO
         title="Open Source CLM — MIT licensed, self-hostable"
-        description="Draft Legal is open source under MIT. Read the code, run it yourself in 3 commands, contribute to the roadmap. Same code as our managed cloud."
+        description="draftLegal is open source under MIT. Read the code, run it yourself in 3 commands, contribute to the roadmap. The full platform — no commercial-only modules."
         path="/open-source"
         schema={articleSchema}
       />
@@ -38,8 +38,9 @@ export default function OpenSource() {
               Read the code. Run it anywhere. Own your CLM.
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-              Draft Legal is MIT-licensed and lives on GitHub. The same code we run on our cloud
-              is the code you can fork, audit, and deploy on your own infrastructure.
+              draftLegal is MIT-licensed and lives on GitHub. The full platform — every agent,
+              every screen, every endpoint — is yours to fork, audit, and deploy on your own
+              infrastructure.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <Button asChild variant="light" size="lg">
@@ -176,9 +177,9 @@ export default function OpenSource() {
       </section>
 
       <CtaStrip
-        eyebrow="Try the cloud"
-        title="Or skip the infra and use ours."
-        subtitle="Same code, same agents, hosted by us. Sign up free and import your contracts."
+        eyebrow="Try the public demo"
+        title="Or kick the tyres on our hosted evaluation site."
+        subtitle="Same code, same agents — running on free-tier infrastructure for product evaluation. Not for production data."
       />
     </>
   )

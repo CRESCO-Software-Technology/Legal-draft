@@ -4,7 +4,6 @@ import { BentoFeatures } from '@/components/sections/BentoFeatures'
 import { AgentGrid } from '@/components/sections/AgentGrid'
 import { LifecycleScroller } from '@/components/sections/LifecycleScroller'
 import { OpenSourceBlock } from '@/components/sections/OpenSourceBlock'
-import { CompareTeaser } from '@/components/sections/CompareTeaser'
 import { TrustStrip } from '@/components/sections/TrustStrip'
 import { Faq } from '@/components/sections/Faq'
 import { CtaStrip } from '@/components/sections/CtaStrip'
@@ -16,7 +15,7 @@ export default function Home() {
     <>
       <SEO
         title="Open-source, agent-first CLM"
-        description="12 AI agents handle the full contract lifecycle — intake, drafting, negotiation, approval, signature, obligations. Self-host or use our managed cloud."
+        description="12 AI agents handle the full contract lifecycle — intake, drafting, negotiation, approval, signature, obligations. MIT-licensed, self-host the same code we run."
         path="/"
         schema={[orgSchema, softwareSchema]}
       />
@@ -26,7 +25,6 @@ export default function Home() {
       <AgentGrid />
       <LifecycleScroller />
       <OpenSourceBlock />
-      <CompareTeaser />
       <TrustStrip />
       <Faq items={homeFaqs} />
       <CtaStrip />

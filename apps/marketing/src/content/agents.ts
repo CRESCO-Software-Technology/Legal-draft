@@ -67,7 +67,7 @@ export const agents: Agent[] = [
     slug: 'signature',
     name: 'Signature Agent',
     blurb: 'Self-hosted eSignature',
-    capability: 'Tokenized links for external signers. JWT for internal. No DocuSign required.',
+    capability: 'Tokenized links for external signers. JWT for internal. No external e-sign vendor required.',
     status: 'planned',
   },
   {

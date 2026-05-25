@@ -24,17 +24,6 @@ const cols = [
     ],
   },
   {
-    title: 'Compare',
-    links: [
-      ['vs Ironclad', '/compare/ironclad'],
-      ['vs Harvey', '/compare/harvey'],
-      ['vs Spellbook', '/compare/spellbook'],
-      ['vs DocuSign CLM', '/compare/docusign-clm'],
-      ['vs Icertis', '/compare/icertis'],
-      ['All alternatives', '/alternatives'],
-    ],
-  },
-  {
     title: 'Resources',
     links: [
       ['Learn', '/learn'],

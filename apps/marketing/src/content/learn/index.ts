@@ -39,7 +39,7 @@ export const learnArticles: Record<string, LearnArticle> = {
       },
       {
         heading: 'CLM vs. eSignature vs. Contract Repository',
-        body: 'eSignature (DocuSign, Adobe Sign) only handles signing. Contract repositories store executed contracts but don\'t manage drafting or approvals. Full CLM covers the whole lifecycle. Modern AI-first platforms (like Draft Legal) collapse these into one product: agents handle drafting and review, the repository indexes everything, and signature is built in.',
+        body: 'Standalone eSignature tools only handle signing. Contract repositories store executed contracts but do not manage drafting or approvals. Full CLM covers the whole lifecycle. Modern AI-first platforms (like draftLegal) collapse these into one product: agents handle drafting and review, the repository indexes everything, and signature is built in.',
       },
       {
         heading: 'What to look for in a CLM platform in 2026',

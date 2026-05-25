@@ -8,85 +8,47 @@ export type PricingTier = {
   features: string[]
 }
 
+// Open Source is the only published tier today. Cloud and Enterprise will
+// surface here once we have traction and real SLAs to stand behind — not a
+// "coming soon" placeholder.
 export const tiers: PricingTier[] = [
   {
     name: 'Open Source',
     tagline: 'Self-hosted. Free forever.',
     price: '$0',
     priceNote: 'MIT-licensed, full feature set',
-    cta: { label: 'Self-host on GitHub', href: 'https://github.com/draft-legal/draft-legal' },
+    cta: { label: 'Self-host on GitHub', href: 'https://github.com/AniketTati/draft-legal' },
+    highlight: true,
     features: [
-      'All 12 agents — same code as Cloud',
+      'All 12 agents — same code as our public demo',
       'Unlimited users, unlimited contracts',
       'Run on your infra, in your VPC',
       'Bring your own AI keys (Anthropic, OpenAI, Google)',
-      'Community support via GitHub Discussions',
+      'Postgres + pgvector, Redis, S3-compat storage, ES/OpenSearch — all standard',
       'MIT license — fork it, modify it, ship it',
-    ],
-  },
-  {
-    name: 'Cloud Starter',
-    tagline: 'Managed by us. For small teams.',
-    price: 'Coming soon',
-    priceNote: 'Join the waitlist — early-access pricing locked in',
-    cta: { label: 'Join waitlist', href: '/contact?source=cloud_starter' },
-    features: [
-      'Everything in Open Source',
-      'We handle infra, upgrades, backups',
-      'Up to 10 users',
-      'Email support',
-      'Anthropic-backed AI pool included',
-      '99.5% uptime',
-    ],
-  },
-  {
-    name: 'Cloud Team',
-    tagline: 'For growing legal teams.',
-    price: 'Coming soon',
-    priceNote: 'Per-user, billed annually',
-    cta: { label: 'Talk to sales', href: '/contact?source=cloud_team' },
-    highlight: true,
-    features: [
-      'Everything in Cloud Starter',
-      'Unlimited users, generous storage',
-      'SAML / SSO',
-      'Audit log retention (7 years)',
-      'Priority support, dedicated Slack channel',
-      '99.9% uptime SLA',
-    ],
-  },
-  {
-    name: 'Enterprise',
-    tagline: 'Single-tenant or on-prem-assisted.',
-    price: 'Custom',
-    priceNote: 'Annual contract',
-    cta: { label: 'Talk to sales', href: '/contact?source=enterprise' },
-    features: [
-      'Single-tenant infrastructure',
-      'Custom data residency (EU, US, APAC)',
-      'Dedicated CSM + onboarding',
-      'Security review & DPA',
-      'SOC 2 Type II reports (target)',
-      'Migration assistance from Ironclad / Spellbook',
     ],
   },
 ]
 
 export const pricingFaqs = [
   {
-    q: 'Why pay for Cloud when the Open Source version is free?',
-    a: 'Same reason teams pay for GitLab Cloud or Mattermost Cloud — running production infra is real work. Cloud gets you SLA, automatic upgrades, security patches, backups, on-call support, and zero DevOps overhead. The product itself is identical.',
+    q: 'Is there a managed cloud option?',
+    a: 'Not yet — we publicly run draftLegal at app.draft-legal.com so you can evaluate the product without installing anything, but that demo runs on free-tier infrastructure with deliberate scale and speed limits. It is not intended for production data. Once we have traction we will publish managed-cloud and enterprise tiers with real SLAs. In the meantime, reach out via the Contact page if you need a managed deployment.',
   },
   {
     q: 'Is anything held back from the open-source version?',
-    a: 'No feature gating. The full agent stack, full UI, full API are open source. Cloud earns its price on operational excellence — not on crippled OSS.',
+    a: 'No. Every agent, every screen, every API endpoint is in the public repo under MIT. Self-host the same code we run.',
   },
   {
     q: 'Can I bring my own AI provider keys?',
-    a: 'Yes, on every tier. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY and Draft Legal routes through your account. Cloud also offers a pooled default if you don\'t want to manage keys.',
+    a: 'Yes. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY and draftLegal routes through your account. Switchable per agent / per tier.',
   },
   {
-    q: 'Do you help us migrate from another CLM?',
-    a: 'Yes — bulk legacy import is in the product, and Cloud Team / Enterprise plans include hands-on migration: template mapping, playbook setup, approval rules, and historical contract import.',
+    q: 'What does the public demo at app.draft-legal.com cost?',
+    a: 'Nothing — try it free. It runs on free-tier infrastructure (scale-to-zero compute, sandbox search, free Postgres) so the first request after idle is slow and large jobs may queue. Production teams should self-host until our managed cloud ships.',
+  },
+  {
+    q: 'How do I deploy it myself?',
+    a: 'docker-compose for local dev, Dockerfiles + a deploy script for Cloud Run / Fly / Render / any container host. See README.md and docs/operations in the repo.',
   },
 ]

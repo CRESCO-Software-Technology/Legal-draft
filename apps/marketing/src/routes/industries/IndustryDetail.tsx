@@ -48,7 +48,7 @@ export default function IndustryDetail() {
                 </a>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link to={`/contact?source=industry_${i.slug}`}>Talk to sales</Link>
+                <Link to={`/contact?source=industry_${i.slug}`}>Contact us</Link>
               </Button>
             </div>
             <p className="mt-6 text-xs text-slate-500">

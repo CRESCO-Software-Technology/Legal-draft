@@ -42,28 +42,13 @@ export const industrySlugs = [
   'logistics',
 ] as const
 
-export const compareSlugs = [
-  'ironclad',
-  'harvey',
-  'spellbook',
-  'docusign-clm',
-  'icertis',
-] as const
-
 export const allRoutes: RouteDef[] = [
-  { path: '/', title: 'Open-source, agent-first CLM', description: 'Open-source contract lifecycle management with 12 AI agents. Self-host or use our managed cloud.', priority: 1.0 },
+  { path: '/', title: 'Open-source, agent-first CLM', description: 'Open-source contract lifecycle management with 12 AI agents. Self-host the full platform under MIT.', priority: 1.0 },
   { path: '/product', title: 'Product', description: 'Tour the full lifecycle: intake, drafting, negotiation, approval, signature, obligations.', priority: 0.9 },
   { path: '/security', title: 'Security', description: 'Self-host story, RBAC, audit log, encryption, AI safety, compliance roadmap.', priority: 0.9 },
-  { path: '/pricing', title: 'Pricing', description: 'Free open source, managed cloud tiers, and enterprise — same product, your choice.', priority: 0.9 },
+  { path: '/pricing', title: 'Pricing', description: 'Free, MIT-licensed, self-hosted. Managed cloud later, when we have traction and real SLAs.', priority: 0.9 },
   { path: '/open-source', title: 'Open Source', description: 'MIT-licensed CLM you can read, audit, and run anywhere. Three-step self-host quickstart.', priority: 0.9 },
-  { path: '/contact', title: 'Contact', description: 'Talk to the Draft Legal team about your contract operations.', priority: 0.5 },
-  { path: '/alternatives', title: 'CLM Alternatives', description: 'Best Ironclad, Harvey, Spellbook, DocuSign CLM, and Icertis alternatives compared honestly.', priority: 0.8 },
-  ...compareSlugs.map((slug) => ({
-    path: `/compare/${slug}`,
-    title: `Draft Legal vs ${slug}`,
-    description: `Honest head-to-head: Draft Legal vs ${slug}. Lifecycle coverage, openness, pricing transparency.`,
-    priority: 0.8,
-  })),
+  { path: '/contact', title: 'Contact', description: 'Talk to the draftLegal team about your contract operations.', priority: 0.5 },
   ...industrySlugs.map((slug) => ({
     path: `/industries/${slug}`,
     title: `CLM for ${slug}`,

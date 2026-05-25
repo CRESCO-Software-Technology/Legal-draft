@@ -26,7 +26,7 @@ export default function Pricing() {
     <>
       <SEO
         title="Pricing"
-        description="Free open source, managed cloud tiers, and enterprise — same product, your choice. No feature gating in OSS."
+        description="Free, MIT-licensed, self-hosted. Managed cloud and enterprise tiers will arrive once we have real traction and SLAs to stand behind."
         path="/pricing"
         schema={offerSchema}
       />
@@ -46,7 +46,7 @@ export default function Pricing() {
             </p>
           </div>
 
-          <div className="mt-14 grid gap-5 lg:grid-cols-4">
+          <div className="mt-14 mx-auto grid max-w-md gap-5">
             {tiers.map((t) => (
               <div
                 key={t.name}
@@ -93,43 +93,41 @@ export default function Pricing() {
             ))}
           </div>
 
-          <div className="mt-16 rounded-2xl border border-slate-200 bg-slate-50 p-8 md:p-10">
-            <div className="grid gap-8 md:grid-cols-2">
+          <div className="mt-16 rounded-2xl border border-amber-200 bg-amber-50/60 p-6 md:p-8">
+            <div className="grid gap-6 md:grid-cols-[1fr_auto] md:items-center">
               <div>
-                <div className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
-                  No feature gating in OSS
+                <div className="text-sm font-semibold uppercase tracking-wide text-amber-800">
+                  Managed cloud &amp; enterprise
                 </div>
-                <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-                  Cloud earns its price on operations, not crippled OSS.
+                <h2 className="mt-2 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+                  Coming once we have traction.
                 </h2>
-                <p className="mt-3 text-sm leading-6 text-slate-600">
-                  Same agents. Same UI. Same API. Cloud just means we run it for you — uptime SLA,
-                  automatic upgrades, security patches, backups, support — so your team doesn't
-                  have to.
+                <p className="mt-3 text-sm leading-6 text-slate-700">
+                  We will publish managed-cloud and enterprise tiers once we have real customers
+                  and real SLAs to stand behind — not before. In the meantime, self-host the same
+                  code we run. If you need a managed deployment now, talk to us directly.
                 </p>
               </div>
-              <div className="text-sm leading-6 text-slate-700">
-                <p className="mb-3 font-semibold text-slate-900">The GitLab / Sentry / Mattermost playbook:</p>
-                <ul className="space-y-2">
-                  <li className="flex gap-2">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    Open core, MIT-licensed, full feature set
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    Managed cloud for teams that don't want to run infra
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    Enterprise tier for single-tenant + dedicated support
-                  </li>
-                  <li className="flex gap-2">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    Migrate freely between self-host and cloud
-                  </li>
-                </ul>
+              <div className="md:text-right">
+                <a
+                  href="/contact"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 transition-colors hover:border-slate-400 hover:bg-slate-50"
+                >
+                  Contact us <ArrowRight className="h-4 w-4" />
+                </a>
               </div>
             </div>
+          </div>
+
+          <div className="mt-10 rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
+            <p>
+              <span className="font-semibold text-slate-900">Heads up about our public demo</span>{' '}
+              at <a href="https://app.draft-legal.com" className="font-medium text-emerald-700 underline underline-offset-2">app.draft-legal.com</a>:
+              it runs on free-tier infrastructure (scale-to-zero compute, sandbox search, free
+              Postgres). It is intended for product evaluation only — first request after idle is
+              slow, and large jobs may queue. Do not put production data in it.
+              {' '}For production workloads, <a href="https://github.com/AniketTati/draft-legal" className="font-medium text-emerald-700 underline underline-offset-2">self-host on GitHub</a>.
+            </p>
           </div>
         </div>
       </section>
