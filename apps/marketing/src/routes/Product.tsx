@@ -4,7 +4,7 @@ import { AgentGrid } from '@/components/sections/AgentGrid'
 import { TrustStrip } from '@/components/sections/TrustStrip'
 import { BrowserFrame } from '@/components/sections/BrowserFrame'
 import { SEO } from '@/lib/seo'
-import { ChevronRight } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { SITE_URL } from '@/lib/utils'
 
 const stageScreenshot: Record<string, { src: string; alt: string; url: string }> = {
@@ -92,7 +92,9 @@ export default function Product() {
                       key={d}
                       className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-700"
                     >
-                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                        <Check className="h-3 w-3" strokeWidth={3} />
+                      </span>
                       <span>{d}</span>
                     </li>
                   ))}
