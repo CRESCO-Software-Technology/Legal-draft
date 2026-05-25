@@ -41,12 +41,12 @@ export default function Pricing() {
               Same product, your choice.
             </h1>
             <p className="mx-auto mt-6 max-w-xl text-lg leading-8 text-slate-600">
-              Self-host the full platform for free, forever. Or let us run it for you on managed
-              cloud — same code, plus operational guarantees.
+              Self-host the full platform for free, forever — or try our hosted free demo without
+              installing anything. Same code, same agents, your call.
             </p>
           </div>
 
-          <div className="mt-14 mx-auto grid max-w-md gap-5">
+          <div className="mt-14 mx-auto grid max-w-3xl gap-5 md:grid-cols-2">
             {tiers.map((t) => (
               <div
                 key={t.name}

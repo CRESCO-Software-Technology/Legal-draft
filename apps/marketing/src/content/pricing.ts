@@ -20,12 +20,27 @@ export const tiers: PricingTier[] = [
     cta: { label: 'Self-host on GitHub', href: 'https://github.com/AniketTati/draft-legal' },
     highlight: true,
     features: [
-      'All 12 agents — same code as our public demo',
+      'All 12 agents — same code as our hosted demo',
       'Unlimited users, unlimited contracts',
       'Run on your infra, in your VPC',
       'Bring your own AI keys (Anthropic, OpenAI, Google)',
       'Postgres + pgvector, Redis, S3-compat storage, ES/OpenSearch — all standard',
       'MIT license — fork it, modify it, ship it',
+    ],
+  },
+  {
+    name: 'Hosted (Free Demo)',
+    tagline: 'Try it without installing anything.',
+    price: '$0',
+    priceNote: 'Free-tier infrastructure, evaluation only',
+    cta: { label: 'Try the demo', href: 'https://app.draft-legal.com/register' },
+    features: [
+      'Same code as Open Source — same agents, same UI',
+      'No install — sign up, log in, try every flow',
+      'Anthropic / OpenAI / Google models supported',
+      'Scale-to-zero compute — first request after idle is slow (5–10 s)',
+      'Free-tier search + 0.5 GB Postgres — storage and request volume are limited',
+      'Not for production data — for product evaluation only',
     ],
   },
 ]
