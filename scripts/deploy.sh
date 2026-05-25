@@ -121,11 +121,19 @@ deploy_gotenberg() {
 }
 
 deploy_web() {
-  echo "--- build + deploy web (Firebase Hosting) ---"
-  : "${VITE_API_URL:?VITE_API_URL must be set, e.g. export VITE_API_URL=https://api.your-domain.com}"
+  echo "--- build + deploy web app (Firebase Hosting target=app) ---"
+  : "${VITE_API_URL:?VITE_API_URL must be set, e.g. export VITE_API_URL=https://app.draft-legal.com}"
   pushd "${ROOT}" >/dev/null
   pnpm --filter web build
-  firebase deploy --only hosting
+  firebase deploy --only hosting:app --project "${GCP_PROJECT}"
+  popd >/dev/null
+}
+
+deploy_marketing() {
+  echo "--- build + deploy marketing site (Firebase Hosting target=marketing) ---"
+  pushd "${ROOT}" >/dev/null
+  pnpm --filter marketing build
+  firebase deploy --only hosting:marketing --project "${GCP_PROJECT}"
   popd >/dev/null
 }
 
@@ -134,14 +142,16 @@ case "${cmd}" in
   agents)     deploy_agents ;;
   gotenberg)  deploy_gotenberg ;;
   web)        deploy_web ;;
+  marketing)  deploy_marketing ;;
   all)
     deploy_gotenberg
     deploy_agents
     deploy_api
     deploy_web
+    deploy_marketing
     ;;
   *)
-    echo "Usage: $0 {all|api|agents|gotenberg|web}" >&2
+    echo "Usage: $0 {all|api|agents|gotenberg|web|marketing}" >&2
     exit 1
     ;;
 esac
