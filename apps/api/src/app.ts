@@ -54,6 +54,7 @@ import { matterRoutes } from './routes/matters.js'
 import { cronRoutes } from './routes/cron.js'
 import { signatureRoutes } from './routes/signatures.js'
 import { inboundEmailRoutes } from './routes/inbound-email.js'
+import { marketingRoutes } from './routes/marketing.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { assertRouterConfigured } from './lib/aiRouter.js'
 
@@ -116,8 +117,29 @@ export async function buildApp() {
   })
 
   // Plugins
+  //
+  // CORS allowlist:
+  //   - The app's FRONTEND_URL (Firebase Hosting site that proxies /api/**
+  //     to this Cloud Run service — same-origin from the browser's POV).
+  //   - The marketing site origins (draftlegal-marketing.web.app + the apex
+  //     domain draft-legal.com) so the public Contact form can POST to
+  //     /api/v1/marketing/contact cross-origin.
+  //   - Local dev (Vite on 5173, marketing dev on 5174).
+  const allowedOrigins = new Set<string>([
+    process.env.FRONTEND_URL ?? 'http://localhost:5173',
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://draftlegal-marketing.web.app',
+    'https://draft-legal.com',
+    'https://www.draft-legal.com',
+  ])
   await app.register(cors, {
-    origin: process.env.FRONTEND_URL ?? 'http://localhost:5173',
+    origin: (origin, cb) => {
+      // Same-origin / curl / server-to-server: no Origin header — allow.
+      if (!origin) return cb(null, true)
+      if (allowedOrigins.has(origin)) return cb(null, true)
+      cb(new Error(`Origin ${origin} not allowed`), false)
+    },
     credentials: true,
   })
 
@@ -208,6 +230,7 @@ export async function buildApp() {
   await app.register(signatureRoutes,      { prefix: '/api/v1' })
   // P7.6.3 — Inbound email parser webhook (SendGrid / Mailgun target)
   await app.register(inboundEmailRoutes,   { prefix: '/api/v1/inbound' })
+  await app.register(marketingRoutes,      { prefix: '/api/v1/marketing' })
 
   // D.0.3 — log the platform routing table at boot; throws if a critical
   // tier (default, fast) has no platform key set.

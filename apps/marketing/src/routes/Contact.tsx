@@ -8,7 +8,12 @@ import { GITHUB_URL } from '@/lib/utils'
 export default function Contact() {
   const [params] = useSearchParams()
   const source = params.get('source') ?? 'contact'
-  const [state, setState] = useState<'idle' | 'submitting' | 'done'>('idle')
+  // 'error' surfaces real failures instead of the previous "swallow and show
+  // success anyway" pattern — submissions now go to a real Cloud Run endpoint
+  // (POST /api/v1/marketing/contact on the app site) that persists to
+  // Postgres. CORS on api-service allows the marketing origin.
+  const [state, setState] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState<string>('')
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -19,17 +24,43 @@ export default function Contact() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setState('submitting')
+    setErrorMsg('')
     try {
-      const res = await fetch('/api/marketing/contact', {
+      // Cross-origin POST to api-service. The app site (https://app.draft-legal.com
+      // and the default https://draftlegal-prod-13353.web.app) proxies /api/**
+      // to api-service via Firebase Hosting rewrites, so this URL hits Cloud Run
+      // directly with no extra DNS or proxy hop. CORS allowlist in api-service
+      // accepts requests from this origin.
+      const res = await fetch('https://draftlegal-prod-13353.web.app/api/v1/marketing/contact', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...form, source }),
       })
-      if (!res.ok) throw new Error('failed')
+      if (!res.ok) {
+        // Pull a useful message off the response if there is one (zod
+        // validation errors, rate-limit, etc.) so the user understands the
+        // failure rather than seeing a generic "something went wrong".
+        let detail = ''
+        try {
+          const j = await res.json()
+          detail = j?.error ?? ''
+        } catch { /* ignore parse errors */ }
+        if (res.status === 429) {
+          setErrorMsg('Too many submissions from this network. Try again in an hour, or email hello@draft-legal.com directly.')
+        } else if (res.status === 400) {
+          setErrorMsg(detail || 'Please check the fields above and try again.')
+        } else {
+          setErrorMsg('Something went wrong on our side. Please try again, or email hello@draft-legal.com directly.')
+        }
+        setState('error')
+        return
+      }
+      setState('done')
     } catch {
-      // swallow — show success anyway, dev API may not be live
+      // Network failure (offline, DNS, CORS). Tell the user the truth.
+      setErrorMsg('Could not reach our server. Check your connection or email hello@draft-legal.com directly.')
+      setState('error')
     }
-    setState('done')
   }
 
   return (
@@ -168,6 +199,16 @@ export default function Contact() {
                         placeholder="We process ~150 NDAs and MSAs/quarter and we are looking at draftLegal to consolidate the workflow."
                       />
                     </Field>
+
+                    {state === 'error' && errorMsg && (
+                      <div
+                        className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+                        role="alert"
+                        data-testid="contact-form-error"
+                      >
+                        {errorMsg}
+                      </div>
+                    )}
 
                     <Button type="submit" size="lg" disabled={state === 'submitting'} className="w-full">
                       {state === 'submitting' ? 'Sending…' : 'Send message'}

@@ -1247,3 +1247,22 @@ model OrgUsageDaily {
   @@index([orgId, date])
   @@map("org_usage_daily")
 }
+
+/// Marketing site contact-form submission. Public POST endpoint stores rows
+/// here; admins read via the future Settings → Leads page. No PII beyond
+/// what the user volunteers; IP captured for rate-limit + abuse triage.
+model MarketingContact {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  company   String?
+  message   String   @db.Text
+  source    String? // free-form, e.g. "/pricing", "industry_saas", etc.
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([email])
+  @@map("marketing_contacts")
+}
