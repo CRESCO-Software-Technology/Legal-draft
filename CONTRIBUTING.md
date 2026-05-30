@@ -16,6 +16,18 @@ pnpm dev              # web :5173 · api :3001 · agents :8000
 
 Log in at http://localhost:5173 with `admin@demo.com` / `password123`.
 
+## Contributor License Agreement (one-time, 30 seconds)
+
+Before your first pull request can be merged, you'll be asked to sign our
+[Contributor License Agreement](./CLA.md). **You keep the copyright to your
+work** — the CLA just grants the project the rights it needs to stay both
+open-source (AGPL-3.0) and sustainable (e.g., offering commercial licenses to
+organizations that can't use AGPL).
+
+It's frictionless: open a PR, and a bot will comment with a link. Reply with the
+one-line confirmation it gives you, and you're signed for all future
+contributions. Nothing to print, email, or install.
+
 ## Ways to contribute
 
 - 🐛 **Fix a bug** — grab a [`good first issue`](https://github.com/AniketTati/draft-legal/labels/good%20first%20issue) or a [`help wanted`](https://github.com/AniketTati/draft-legal/labels/help%20wanted).
