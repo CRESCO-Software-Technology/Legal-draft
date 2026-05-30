@@ -103,8 +103,8 @@ export default function OpenSource() {
             {[
               {
                 icon: Scale,
-                title: 'MIT License',
-                body: 'Use it commercially. Modify it. Ship products built on it. No commercial-only modules.',
+                title: 'AGPL-3.0 License',
+                body: 'Use it commercially, modify it, run it anywhere. No commercial-only modules. If you offer a modified version as a network service, share your changes back — or take a commercial license to opt out.',
               },
               {
                 icon: Heart,
@@ -161,9 +161,10 @@ export default function OpenSource() {
                 Forking & sponsorship
               </h3>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                MIT means you can fork freely. If you ship a commercial product on top of Draft
-                Legal, we'd love to hear about it — and we run a sponsorship program for orgs that
-                want to fund specific features.
+                AGPL-3.0 means you can fork and self-host freely. If you want to ship a closed
+                commercial product on top of draftLegal, a commercial license lifts the
+                network-copyleft terms — and we run a sponsorship program for orgs that want to
+                fund specific features.
               </p>
               <a
                 href="/contact?source=sponsor"

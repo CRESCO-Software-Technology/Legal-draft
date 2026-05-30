@@ -2,6 +2,7 @@
   "name": "clm-platform",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "setup": "bash scripts/setup.sh",
