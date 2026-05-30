@@ -5,7 +5,7 @@
 ### The open-source alternative to Ironclad + Harvey.
 **Self-hosted, AI-native contract lifecycle management — your contracts never leave your servers.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](./LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-emerald.svg)](./LICENSE)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-docker%20compose-blue)](#quickstart)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 [![Good first issues](https://img.shields.io/github/issues/AniketTati/draft-legal/good%20first%20issue?color=7057ff&label=good%20first%20issues)](https://github.com/AniketTati/draft-legal/labels/good%20first%20issue)
@@ -142,7 +142,11 @@ The Dockerfiles are shared — the same images run on Compose, Cloud Run, EKS, R
 
 ## License
 
-[MIT](./LICENSE) — use it, fork it, self-host it, build on it.
+[AGPL-3.0](./LICENSE) — free to use, self-host, fork, and build on. If you run a
+modified version as a network service, the AGPL asks that you share your changes
+back, which keeps draftLegal open for everyone. Want to build a commercial product
+without the network-copyleft terms? A separate commercial license is available —
+get in touch.
 
 <div align="center">
 <br>

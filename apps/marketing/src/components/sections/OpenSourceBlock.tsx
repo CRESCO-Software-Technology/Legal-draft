@@ -35,7 +35,7 @@ export function OpenSourceBlock() {
             The GitLab playbook, for contracts.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-slate-300">
-            Same model as GitLab, Mattermost, and Sentry: MIT-licensed core you can read and run.
+            Same model as GitLab, Mattermost, and Sentry: AGPL-3.0 licensed core you can read and run.
             No feature gating, no commercial-only modules. Fork it, audit it, ship it.
           </p>
         </div>

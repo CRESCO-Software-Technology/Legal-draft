@@ -3,7 +3,7 @@ export type FAQ = { q: string; a: string }
 export const homeFaqs: FAQ[] = [
   {
     q: 'Is draftLegal really free?',
-    a: 'Yes. The full product is MIT-licensed and free to self-host forever — no feature gating, no seat caps. Managed cloud and enterprise tiers will arrive once we have real traction and SLAs to stand behind.',
+    a: 'Yes. The full product is AGPL-3.0 licensed and free to self-host forever — no feature gating, no seat caps. Managed cloud and enterprise tiers will arrive once we have real traction and SLAs to stand behind.',
   },
   {
     q: 'Can I self-host on my own servers or VPC?',

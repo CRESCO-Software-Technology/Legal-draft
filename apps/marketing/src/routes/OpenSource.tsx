@@ -9,7 +9,7 @@ const articleSchema = {
   '@type': 'Article',
   headline: 'Draft Legal — Open Source CLM',
   description:
-    'MIT-licensed contract lifecycle management. Read the code, run it on your own infrastructure, contribute to the roadmap.',
+    'AGPL-3.0 licensed contract lifecycle management. Read the code, run it on your own infrastructure, contribute to the roadmap.',
   url: `${SITE_URL}/open-source`,
   author: { '@type': 'Organization', name: 'Draft Legal' },
 }
@@ -18,8 +18,8 @@ export default function OpenSource() {
   return (
     <>
       <SEO
-        title="Open Source CLM — MIT licensed, self-hostable"
-        description="draftLegal is open source under MIT. Read the code, run it yourself in 3 commands, contribute to the roadmap. The full platform — no commercial-only modules."
+        title="Open Source CLM — AGPL-3.0 licensed, self-hostable"
+        description="draftLegal is open source under AGPL-3.0. Read the code, run it yourself in 3 commands, contribute to the roadmap. The full platform — no commercial-only modules."
         path="/open-source"
         schema={articleSchema}
       />
@@ -38,7 +38,7 @@ export default function OpenSource() {
               Read the code. Run it anywhere. Own your CLM.
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-              draftLegal is MIT-licensed and lives on GitHub. The full platform — every agent,
+              draftLegal is AGPL-3.0 licensed and lives on GitHub. The full platform — every agent,
               every screen, every endpoint — is yours to fork, audit, and deploy on your own
               infrastructure.
             </p>

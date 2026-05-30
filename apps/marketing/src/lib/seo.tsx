@@ -76,7 +76,7 @@ export const orgSchema = {
   url: SITE_URL,
   logo: `${SITE_URL}/favicon.svg`,
   description:
-    'Open-source, agent-first contract lifecycle management. MIT-licensed, self-host the same code we run.',
+    'Open-source, agent-first contract lifecycle management. AGPL-3.0 licensed, self-host the same code we run.',
   sameAs: ['https://github.com/AniketTati/draft-legal'],
 }
 

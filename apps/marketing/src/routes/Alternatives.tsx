@@ -22,7 +22,7 @@ export default function Alternatives() {
     <>
       <SEO
         title="CLM Alternatives — neutral comparisons"
-        description="Comparing Ironclad, Harvey, Spellbook, DocuSign CLM, or Icertis against an open-source alternative? draftLegal is MIT-licensed CLM you can self-host and audit. Neutral head-to-head pages on each."
+        description="Comparing Ironclad, Harvey, Spellbook, DocuSign CLM, or Icertis against an open-source alternative? draftLegal is AGPL-3.0 licensed CLM you can self-host and audit. Neutral head-to-head pages on each."
         path="/alternatives"
         schema={itemListSchema}
       />

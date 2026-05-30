@@ -14,7 +14,7 @@ export function LifecycleScroller() {
             One platform, six stages, every contract.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-slate-600">
-            Intake to obligations on one open codebase. MIT-licensed end-to-end — read every line
+            Intake to obligations on one open codebase. AGPL-3.0 licensed end-to-end — read every line
             of every agent before you trust it with a contract.
           </p>
         </div>

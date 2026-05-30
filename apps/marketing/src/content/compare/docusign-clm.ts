@@ -9,7 +9,7 @@ export const docusignClm: CompareData = {
     'DocuSign CLM is a strong fit for teams already standardised on DocuSign for eSignature who want the rest of the lifecycle on the same vendor. draftLegal is an open-source alternative that bundles eSignature in the core product and lets you self-host the whole platform. Pick whichever matches your existing vendor footprint and openness requirements.',
   pickDraftLegalIf: [
     'You want eSignature as a built-in feature of your CLM, not an add-on',
-    'You want to self-host the platform under MIT and audit the code',
+    'You want to self-host the platform under AGPL-3.0 and audit the code',
     'You want to avoid platform lock-in to a single eSignature vendor',
     'You want procurement-aware workflows on the roadmap',
   ],
@@ -24,7 +24,7 @@ export const docusignClm: CompareData = {
     {
       title: 'Openness & deployment',
       rows: [
-        { label: 'Open source (MIT)', draftLegal: 'yes', competitor: 'no' },
+        { label: 'Open source (AGPL-3.0)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Self-host on your infra', draftLegal: 'yes', competitor: 'no' },
         { label: 'Code transparency (full repo)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Free self-host tier', draftLegal: 'yes', competitor: 'no' },

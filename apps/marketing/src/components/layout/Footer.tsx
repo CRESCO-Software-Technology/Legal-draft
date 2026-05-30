@@ -85,7 +85,7 @@ export function Footer() {
           ))}
         </div>
         <div className="mt-12 flex flex-col items-start justify-between gap-4 border-t border-slate-200 pt-8 text-xs text-slate-500 md:flex-row md:items-center">
-          <div>© {new Date().getFullYear()} Draft Legal. MIT-licensed open source.</div>
+          <div>© {new Date().getFullYear()} Draft Legal. AGPL-3.0 licensed open source.</div>
           <div className="flex gap-5">
             <a href="/privacy">Privacy</a>
             <a href="/terms">Terms</a>

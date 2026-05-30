@@ -36,7 +36,7 @@ export function Hero() {
           12 AI agents handle intake, drafting, negotiation, approval, signature, and obligations —
           across the full contract lifecycle.{' '}
           <span className="text-slate-900">
-            MIT-licensed, self-host the same code we run.
+            AGPL-3.0 licensed, self-host the same code we run.
           </span>
         </p>
 
@@ -68,14 +68,14 @@ export function Hero() {
           </div>
           <div>
             <div className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">1</div>
-            <div className="mt-1 text-sm text-slate-600">platform, MIT-licensed</div>
+            <div className="mt-1 text-sm text-slate-600">platform, AGPL-3.0 licensed</div>
           </div>
         </div>
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-500">
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            MIT licensed
+            AGPL-3.0 licensed
           </span>
           <span>·</span>
           <span className="flex items-center gap-1.5">

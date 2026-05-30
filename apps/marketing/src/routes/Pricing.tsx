@@ -26,7 +26,7 @@ export default function Pricing() {
     <>
       <SEO
         title="Pricing"
-        description="Free, MIT-licensed, self-hosted. Managed cloud and enterprise tiers will arrive once we have real traction and SLAs to stand behind."
+        description="Free, AGPL-3.0 licensed, self-hosted. Managed cloud and enterprise tiers will arrive once we have real traction and SLAs to stand behind."
         path="/pricing"
         schema={offerSchema}
       />

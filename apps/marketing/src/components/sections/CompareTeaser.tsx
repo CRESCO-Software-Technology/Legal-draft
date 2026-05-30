@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 const cols = ['draftLegal', 'Ironclad', 'Harvey', 'Spellbook'] as const
 
 const rows: { label: string; values: ('yes' | 'no' | 'partial' | string)[] }[] = [
-  { label: 'Open source (MIT)',                values: ['yes', 'no', 'no', 'no'] },
+  { label: 'Open source (AGPL-3.0)',                values: ['yes', 'no', 'no', 'no'] },
   { label: 'Self-host on your infra',          values: ['yes', 'no', 'no', 'no'] },
   { label: 'Code transparency (full repo)',    values: ['yes', 'no', 'no', 'no'] },
   { label: 'Full CLM (intake → obligations)',  values: ['yes', 'yes', 'no', 'no'] },

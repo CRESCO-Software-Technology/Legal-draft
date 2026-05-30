@@ -9,7 +9,7 @@ export const harvey: CompareData = {
     'Harvey and draftLegal solve different problems. Harvey is a legal-AI workbench primarily used by law firms for research and document work. draftLegal is a full Contract Lifecycle Management platform (intake → obligations) you self-host or run in our hosted demo. Most teams using draftLegal also use a legal-AI assistant somewhere; we focus on the contract operations layer underneath.',
   pickDraftLegalIf: [
     'You need a full CLM, not just an AI assistant — intake, drafting, approvals, signature, obligations',
-    'You want to self-host the platform under MIT and audit the code',
+    'You want to self-host the platform under AGPL-3.0 and audit the code',
     'You want procurement-friendly contract operations (POs, vendor onboarding on the roadmap)',
     'You want one open codebase covering the whole lifecycle',
   ],
@@ -31,7 +31,7 @@ export const harvey: CompareData = {
     {
       title: 'Openness & deployment',
       rows: [
-        { label: 'Open source (MIT)', draftLegal: 'yes', competitor: 'no' },
+        { label: 'Open source (AGPL-3.0)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Self-host on your infra', draftLegal: 'yes', competitor: 'no' },
         { label: 'Code transparency (full repo)', draftLegal: 'yes', competitor: 'no' },
       ],

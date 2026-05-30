@@ -11,7 +11,7 @@ export const ironclad: CompareData = {
   competitorOneLiner:
     'Established enterprise CLM with a mature workflow engine, broad lifecycle coverage, and an AI assistant called Jurist. A common choice for large legal-ops teams.',
   tldr:
-    'draftLegal and Ironclad both cover the full contract lifecycle. The decision usually comes down to deployment posture: draftLegal is MIT-licensed and self-hostable so your security team can read every line and your contracts can stay in your VPC. Ironclad is a mature managed product with a long track record. Pick whichever model fits your risk appetite.',
+    'draftLegal and Ironclad both cover the full contract lifecycle. The decision usually comes down to deployment posture: draftLegal is AGPL-3.0 licensed and self-hostable so your security team can read every line and your contracts can stay in your VPC. Ironclad is a mature managed product with a long track record. Pick whichever model fits your risk appetite.',
   pickDraftLegalIf: [
     'You need to read every line of code your CLM runs before deploying it',
     'Your security team requires self-host or single-tenant cloud',
@@ -30,7 +30,7 @@ export const ironclad: CompareData = {
     {
       title: 'Openness & deployment',
       rows: [
-        { label: 'Open source (MIT)', draftLegal: 'yes', competitor: 'no' },
+        { label: 'Open source (AGPL-3.0)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Self-host on your infra', draftLegal: 'yes', competitor: 'no' },
         { label: 'Code transparency (full repo)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Free self-host tier', draftLegal: 'yes', competitor: 'no' },

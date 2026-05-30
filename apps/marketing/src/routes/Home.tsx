@@ -16,7 +16,7 @@ export default function Home() {
     <>
       <SEO
         title="Open-source, agent-first CLM"
-        description="12 AI agents handle the full contract lifecycle — intake, drafting, negotiation, approval, signature, obligations. MIT-licensed, self-host the same code we run."
+        description="12 AI agents handle the full contract lifecycle — intake, drafting, negotiation, approval, signature, obligations. AGPL-3.0 licensed, self-host the same code we run."
         path="/"
         schema={[orgSchema, softwareSchema]}
       />

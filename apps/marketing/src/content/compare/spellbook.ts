@@ -6,7 +6,7 @@ export const spellbook: CompareData = {
   competitorOneLiner:
     'AI contract drafting and review assistant that runs as a Microsoft Word add-in. Popular with corporate legal teams who live in Word.',
   tldr:
-    'Spellbook is a Word add-in for AI drafting and clause review. draftLegal is a standalone Contract Lifecycle Management platform — intake, drafting, redline, approvals, signature, obligations — that you self-host under MIT. Pick Spellbook if you want AI in your existing Word workflow. Pick draftLegal if you want one platform for the full lifecycle that your security team can audit.',
+    'Spellbook is a Word add-in for AI drafting and clause review. draftLegal is a standalone Contract Lifecycle Management platform — intake, drafting, redline, approvals, signature, obligations — that you self-host under AGPL-3.0. Pick Spellbook if you want AI in your existing Word workflow. Pick draftLegal if you want one platform for the full lifecycle that your security team can audit.',
   pickDraftLegalIf: [
     'You want a full CLM, not just an AI plugin inside Word',
     'You want approvals, signatures, and obligation tracking in the same product',
@@ -32,7 +32,7 @@ export const spellbook: CompareData = {
     {
       title: 'Openness & deployment',
       rows: [
-        { label: 'Open source (MIT)', draftLegal: 'yes', competitor: 'no' },
+        { label: 'Open source (AGPL-3.0)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Self-host on your infra', draftLegal: 'yes', competitor: 'no' },
         { label: 'Code transparency (full repo)', draftLegal: 'yes', competitor: 'no' },
       ],

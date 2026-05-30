@@ -11,7 +11,7 @@ export const icertis: CompareData = {
     'You want to read every line of code your CLM runs before adopting it',
     'You want to self-host on your own infrastructure',
     'You want procurement-focused features built openly with you (see our roadmap)',
-    'You prefer one MIT-licensed codebase to a multi-module enterprise suite',
+    'You prefer one AGPL-3.0 licensed codebase to a multi-module enterprise suite',
   ],
   pickCompetitorIf: [
     'You are a very large enterprise with mature procurement and supplier-management needs',
@@ -24,7 +24,7 @@ export const icertis: CompareData = {
     {
       title: 'Openness & deployment',
       rows: [
-        { label: 'Open source (MIT)', draftLegal: 'yes', competitor: 'no' },
+        { label: 'Open source (AGPL-3.0)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Self-host on your infra', draftLegal: 'yes', competitor: 'no' },
         { label: 'Code transparency (full repo)', draftLegal: 'yes', competitor: 'no' },
         { label: 'Free self-host tier', draftLegal: 'yes', competitor: 'no' },

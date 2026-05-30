@@ -16,7 +16,7 @@ export const tiers: PricingTier[] = [
     name: 'Open Source',
     tagline: 'Self-hosted. Free forever.',
     price: '$0',
-    priceNote: 'MIT-licensed, full feature set',
+    priceNote: 'AGPL-3.0 licensed, full feature set',
     cta: { label: 'Self-host on GitHub', href: 'https://github.com/AniketTati/draft-legal' },
     highlight: true,
     features: [
@@ -52,7 +52,7 @@ export const pricingFaqs = [
   },
   {
     q: 'Is anything held back from the open-source version?',
-    a: 'No. Every agent, every screen, every API endpoint is in the public repo under MIT. Self-host the same code we run.',
+    a: 'No. Every agent, every screen, every API endpoint is in the public repo under AGPL-3.0. Self-host the same code we run.',
   },
   {
     q: 'Can I bring my own AI provider keys?',
