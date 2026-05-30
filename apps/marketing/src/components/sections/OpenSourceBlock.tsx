@@ -10,7 +10,7 @@ const pillars = [
   {
     icon: Unlock,
     title: 'No lock-in',
-    body: 'Export your data anytime. Or take the code with you and run it forever. MIT license, no commercial-only modules holding you hostage.',
+    body: 'Export your data anytime. Or take the code with you and run it forever. AGPL-3.0 license, no commercial-only modules holding you hostage.',
   },
   {
     icon: Server,

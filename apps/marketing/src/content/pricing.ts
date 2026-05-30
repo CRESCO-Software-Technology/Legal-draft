@@ -25,7 +25,7 @@ export const tiers: PricingTier[] = [
       'Run on your infra, in your VPC',
       'Bring your own AI keys (Anthropic, OpenAI, Google)',
       'Postgres + pgvector, Redis, S3-compat storage, ES/OpenSearch — all standard',
-      'MIT license — fork it, modify it, ship it',
+      'AGPL-3.0 license — fork it, modify it, ship it',
     ],
   },
   {
