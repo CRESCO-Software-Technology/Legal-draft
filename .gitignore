@@ -77,3 +77,7 @@ scripts/persona-tests/output/
 
 # UI smoke screenshots (regenerated each run)
 scripts/screenshots/smoke-ui/
+
+# Marketing assets — strategy/plans, not part of the product.
+# Leading slash anchors to repo root so the tracked apps/marketing/ site is unaffected.
+/marketing/

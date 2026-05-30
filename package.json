@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "dev:setup": "bash scripts/setup.sh",
     "dev": "pnpm --parallel -r dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
