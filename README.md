@@ -10,7 +10,9 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 [![Good first issues](https://img.shields.io/github/issues/AniketTati/draft-legal/good%20first%20issue?color=7057ff&label=good%20first%20issues)](https://github.com/AniketTati/draft-legal/labels/good%20first%20issue)
 
-[**▶ Watch the 60-second demo**](https://www.youtube.com/watch?v=YOUR_VIDEO_ID) · [Quickstart](#quickstart) · [Contributing](./CONTRIBUTING.md) · [Legal contributors](./CONTRIBUTING-LEGAL.md)
+[**▶ Watch the 60-second demo**](https://youtu.be/ZCeWJNUQHpI) · [Quickstart](#quickstart) · [Contributing](./CONTRIBUTING.md) · [Legal contributors](./CONTRIBUTING-LEGAL.md)
+
+[![Watch the 60-second demo](https://img.youtube.com/vi/ZCeWJNUQHpI/maxresdefault.jpg)](https://youtu.be/ZCeWJNUQHpI)
 
 </div>
 
