@@ -150,6 +150,11 @@ back, which keeps draftLegal open for everyone. Want to build a commercial produ
 without the network-copyleft terms? A separate commercial license is available —
 get in touch.
 
+## Contact
+
+Questions, commercial licensing, partnerships, or press — reach out:
+**[aniket.tatipamula@gmail.com](mailto:aniket.tatipamula@gmail.com)**
+
 <div align="center">
 <br>
 

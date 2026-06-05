@@ -46,11 +46,11 @@ export default function Contact() {
           detail = j?.error ?? ''
         } catch { /* ignore parse errors */ }
         if (res.status === 429) {
-          setErrorMsg('Too many submissions from this network. Try again in an hour, or email hello@draft-legal.com directly.')
+          setErrorMsg('Too many submissions from this network. Try again in an hour, or email aniket.tatipamula@gmail.com directly.')
         } else if (res.status === 400) {
           setErrorMsg(detail || 'Please check the fields above and try again.')
         } else {
-          setErrorMsg('Something went wrong on our side. Please try again, or email hello@draft-legal.com directly.')
+          setErrorMsg('Something went wrong on our side. Please try again, or email aniket.tatipamula@gmail.com directly.')
         }
         setState('error')
         return
@@ -58,7 +58,7 @@ export default function Contact() {
       setState('done')
     } catch {
       // Network failure (offline, DNS, CORS). Tell the user the truth.
-      setErrorMsg('Could not reach our server. Check your connection or email hello@draft-legal.com directly.')
+      setErrorMsg('Could not reach our server. Check your connection or email aniket.tatipamula@gmail.com directly.')
       setState('error')
     }
   }
@@ -100,10 +100,10 @@ export default function Contact() {
                   <div>
                     <div className="text-sm font-semibold text-slate-900">Email</div>
                     <a
-                      href="mailto:hello@draft-legal.com"
+                      href="mailto:aniket.tatipamula@gmail.com"
                       className="text-sm text-slate-600 hover:text-emerald-700"
                     >
-                      hello@draft-legal.com
+                      aniket.tatipamula@gmail.com
                     </a>
                   </div>
                 </li>
