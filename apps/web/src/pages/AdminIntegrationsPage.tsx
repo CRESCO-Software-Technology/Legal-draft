@@ -1,9 +1,11 @@
 /**
  * AdminIntegrationsPage — Phase 10A — manage API keys + webhooks.
  *
- * Two tabs:
+ * Three tabs:
  *   1. API Keys — create / list / revoke (full key shown ONCE on create)
  *   2. Webhooks — create / list / edit / test / delete + delivery log
+ *   3. Health  — per-webhook health state, 24h/7d delivery aggregates,
+ *               last error + one-click retry (Phase 10)
  *
  * Lives at /admin/integrations.
  */
@@ -16,6 +18,7 @@ import { usePermission } from '@/lib/permissions'
 import {
   Plug, Plus, Loader2, Copy, Check, Trash2, X, Send, AlertCircle, Lock,
   Key, Webhook as WebhookIcon, ChevronRight, ChevronDown,
+  Activity, RefreshCw,
 } from 'lucide-react'
 
 interface ApiKey {
@@ -54,7 +57,7 @@ interface Delivery {
   deliveredAt:    string | null
 }
 
-type Tab = 'keys' | 'webhooks'
+type Tab = 'keys' | 'webhooks' | 'health'
 
 export function AdminIntegrationsPage() {
   const [tab, setTab] = useState<Tab>('keys')
@@ -103,9 +106,12 @@ export function AdminIntegrationsPage() {
         <TabButton active={tab === 'webhooks'} onClick={() => setTab('webhooks')} testId="tab-webhooks">
           <WebhookIcon className="h-4 w-4" /> Webhooks
         </TabButton>
+        <TabButton active={tab === 'health'} onClick={() => setTab('health')} testId="tab-health">
+          <Activity className="h-4 w-4" /> Health
+        </TabButton>
       </div>
 
-      {tab === 'keys' ? <ApiKeysSection /> : <WebhooksSection />}
+      {tab === 'keys' ? <ApiKeysSection /> : tab === 'webhooks' ? <WebhooksSection /> : <HealthSection />}
     </div>
   )
 }
@@ -602,6 +608,238 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Health (Phase 10 — integration health dashboard) ─────────────────
+
+interface WebhookHealth {
+  id: string
+  name: string
+  url: string
+  type: 'generic' | 'slack'
+  enabled: boolean
+  events: string[]
+  health: 'healthy' | 'degraded' | 'failing' | 'disabled'
+  lastDeliveryAt: string | null
+  lastDeliveryStatus: string | null
+  consecutiveFailures: number
+  deliveries: { ok24h: number; fail24h: number; ok7d: number; fail7d: number }
+  lastFailure: {
+    deliveryId: string
+    event: string
+    errorMessage: string | null
+    responseStatus: number | null
+    at: string
+  } | null
+}
+
+interface HealthResponse {
+  webhooks: WebhookHealth[]
+  summary: {
+    healthy: number
+    degraded: number
+    failing: number
+    disabled: number
+    deliveries24h: number
+    failed24h: number
+    successRate7d: number | null
+  }
+  apiKeys: { active: number; expiringSoon: number; lastUsedAt: string | null }
+}
+
+const HEALTH_BADGE: Record<WebhookHealth['health'], { label: string; dot: string; cls: string }> = {
+  healthy:  { label: 'Healthy',  dot: 'bg-emerald-500', cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+  degraded: { label: 'Degraded', dot: 'bg-amber-500',   cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+  failing:  { label: 'Failing',  dot: 'bg-red-500',     cls: 'bg-red-50 border-red-200 text-red-700' },
+  disabled: { label: 'Disabled', dot: 'bg-gray-300',    cls: 'bg-gray-100 border-gray-200 text-gray-500' },
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'never'
+  const ms = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+function HealthSection() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery<HealthResponse>({
+    queryKey: ['integrations-health'],
+    queryFn:  () => api.get('/admin/integrations/health').then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  const retry = useMutation({
+    mutationFn: async ({ webhookId, deliveryId }: { webhookId: string; deliveryId: string }) =>
+      api.post(`/admin/integrations/webhooks/${webhookId}/deliveries/${deliveryId}/retry`),
+    onSuccess: () => {
+      // Delivery is async — give the worker a beat before refreshing.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['integrations-health'] }), 2000)
+    },
+  })
+
+  if (isLoading) return <div className="py-12 flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-gray-300" /></div>
+  if (!data) return null
+
+  const { webhooks, summary, apiKeys } = data
+
+  return (
+    <div data-testid="health-section">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <SummaryCard
+          label="Webhooks"
+          value={`${summary.healthy}/${webhooks.length} healthy`}
+          sub={[
+            summary.degraded > 0 ? `${summary.degraded} degraded` : null,
+            summary.failing > 0 ? `${summary.failing} failing` : null,
+            summary.disabled > 0 ? `${summary.disabled} disabled` : null,
+          ].filter(Boolean).join(' · ') || 'all good'}
+          tone={summary.failing > 0 ? 'red' : summary.degraded > 0 ? 'amber' : 'green'}
+          testId="health-card-webhooks"
+        />
+        <SummaryCard
+          label="Deliveries (24h)"
+          value={String(summary.deliveries24h)}
+          sub={summary.failed24h > 0 ? `${summary.failed24h} failed` : 'no failures'}
+          tone={summary.failed24h > 0 ? 'amber' : 'green'}
+          testId="health-card-deliveries"
+        />
+        <SummaryCard
+          label="Success rate (7d)"
+          value={summary.successRate7d != null ? `${summary.successRate7d}%` : '—'}
+          sub={summary.successRate7d != null ? 'of webhook deliveries' : 'no deliveries yet'}
+          tone={summary.successRate7d == null ? 'gray' : summary.successRate7d >= 95 ? 'green' : summary.successRate7d >= 80 ? 'amber' : 'red'}
+          testId="health-card-success-rate"
+        />
+        <SummaryCard
+          label="API keys"
+          value={String(apiKeys.active)}
+          sub={apiKeys.expiringSoon > 0
+            ? `${apiKeys.expiringSoon} expiring within 30d`
+            : apiKeys.lastUsedAt ? `last used ${relativeTime(apiKeys.lastUsedAt)}` : 'never used'}
+          tone={apiKeys.expiringSoon > 0 ? 'amber' : 'gray'}
+          testId="health-card-api-keys"
+        />
+      </div>
+
+      {/* Per-webhook health table */}
+      {webhooks.length === 0 ? (
+        <div className="text-center py-12 px-6 border border-dashed border-gray-200 rounded-xl">
+          <Activity className="h-7 w-7 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm text-gray-500 mb-1">No webhooks configured.</p>
+          <p className="text-xs text-gray-400">Add one on the Webhooks tab — health appears here once deliveries start flowing.</p>
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm" data-testid="health-table">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium">Status</th>
+                <th className="text-left px-4 py-3 font-medium">Webhook</th>
+                <th className="text-left px-4 py-3 font-medium">Last delivery</th>
+                <th className="text-left px-4 py-3 font-medium">24h</th>
+                <th className="text-left px-4 py-3 font-medium">7d</th>
+                <th className="text-left px-4 py-3 font-medium">Last error</th>
+                <th className="text-right px-4 py-3 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {webhooks.map(w => {
+                const badge = HEALTH_BADGE[w.health]
+                return (
+                  <tr key={w.id} data-testid={`health-row-${w.id}`} data-health={w.health}>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium border ${badge.cls}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
+                        {badge.label}
+                      </span>
+                      {w.consecutiveFailures > 0 && (
+                        <div className="text-[10.5px] text-red-600 mt-1">{w.consecutiveFailures} consecutive failure{w.consecutiveFailures > 1 ? 's' : ''}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900">{w.name}</div>
+                      <div className="text-xs text-gray-400 truncate max-w-[220px]" title={w.url}>{w.url}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-600">
+                      <div>{relativeTime(w.lastDeliveryAt)}</div>
+                      {w.lastDeliveryStatus && (
+                        <div className={w.lastDeliveryStatus === 'success' ? 'text-emerald-600' : 'text-red-600'}>
+                          {w.lastDeliveryStatus}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className="text-emerald-700">{w.deliveries.ok24h} ok</span>
+                      {w.deliveries.fail24h > 0 && <span className="text-red-600"> · {w.deliveries.fail24h} failed</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className="text-emerald-700">{w.deliveries.ok7d} ok</span>
+                      {w.deliveries.fail7d > 0 && <span className="text-red-600"> · {w.deliveries.fail7d} failed</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-600 max-w-[240px]">
+                      {w.lastFailure ? (
+                        <div>
+                          <div className="truncate" title={w.lastFailure.errorMessage ?? undefined}>
+                            {w.lastFailure.errorMessage ?? `HTTP ${w.lastFailure.responseStatus ?? '?'}`}
+                          </div>
+                          <div className="text-gray-400">{w.lastFailure.event} · {relativeTime(w.lastFailure.at)}</div>
+                        </div>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {w.lastFailure && w.enabled && (
+                        <button
+                          onClick={() => retry.mutate({ webhookId: w.id, deliveryId: w.lastFailure!.deliveryId })}
+                          disabled={retry.isPending}
+                          data-testid={`health-retry-${w.id}`}
+                          className="text-xs text-indigo-600 hover:text-indigo-700 inline-flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${retry.isPending ? 'animate-spin' : ''}`} /> Retry
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[11px] text-gray-400 mt-3">
+        Auto-refreshes every 30s. “Failing” = 3+ consecutive failures; “Degraded” = failures within the last 7 days.
+      </p>
+    </div>
+  )
+}
+
+function SummaryCard({ label, value, sub, tone, testId }: {
+  label: string
+  value: string
+  sub: string
+  tone: 'green' | 'amber' | 'red' | 'gray'
+  testId: string
+}) {
+  const toneCls = {
+    green: 'text-emerald-700',
+    amber: 'text-amber-700',
+    red:   'text-red-700',
+    gray:  'text-gray-900',
+  }[tone]
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl px-4 py-3" data-testid={testId}>
+      <div className="text-[11px] uppercase tracking-wider text-gray-400 font-medium">{label}</div>
+      <div className={`text-xl font-semibold mt-0.5 ${toneCls}`}>{value}</div>
+      <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
     </div>
   )
 }

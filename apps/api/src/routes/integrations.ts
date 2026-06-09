@@ -14,6 +14,10 @@
  *     POST   /admin/integrations/webhooks/:id/test    — fire a synthetic event
  *     GET    /admin/integrations/webhooks/:id/deliveries — recent delivery log
  *
+ *   Health (Phase 10 — integration health dashboard):
+ *     GET    /admin/integrations/health               — per-webhook health + delivery aggregates
+ *     POST   /admin/integrations/webhooks/:id/deliveries/:deliveryId/retry — requeue a failed delivery
+ *
  *   Public:
  *     GET    /admin/integrations/events               — list of webhook event types
  */
@@ -244,6 +248,137 @@ export async function integrationsRoutes(app: FastifyInstance) {
       },
     })
     return reply.send({ ok: true, message: 'Test delivery queued' })
+  })
+
+  // ── GET /health — integration health dashboard (Phase 10) ────────────
+  // Per-webhook health state + 24h/7d delivery aggregates + API key
+  // summary, in one call so the dashboard renders from a single query.
+  app.get('/health', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    const now = Date.now()
+    const since24h = new Date(now - 24 * 60 * 60 * 1000)
+    const since7d  = new Date(now - 7 * 24 * 60 * 60 * 1000)
+
+    const webhooks = await prisma.webhook.findMany({
+      where: { orgId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true, name: true, url: true, type: true, enabled: true,
+        events: true, lastDeliveryAt: true, lastDeliveryStatus: true,
+        failureCount: true, createdAt: true,
+      },
+    })
+    const ids = webhooks.map(w => w.id)
+
+    // 7d delivery counts grouped by webhook × outcome; 24h is a subset
+    // filter on the same axis. Two groupBys beat N×4 count queries.
+    const [counts7d, counts24h, lastFailures] = await Promise.all([
+      prisma.webhookDelivery.groupBy({
+        by: ['webhookId', 'succeeded'],
+        where: { webhookId: { in: ids }, createdAt: { gte: since7d } },
+        _count: { _all: true },
+      }),
+      prisma.webhookDelivery.groupBy({
+        by: ['webhookId', 'succeeded'],
+        where: { webhookId: { in: ids }, createdAt: { gte: since24h } },
+        _count: { _all: true },
+      }),
+      // Most recent failed delivery per webhook — powers the "last error"
+      // column + the retry button. DISTINCT ON keeps it one round-trip.
+      ids.length > 0
+        ? prisma.webhookDelivery.findMany({
+            where: { webhookId: { in: ids }, succeeded: false },
+            orderBy: [{ webhookId: 'asc' }, { createdAt: 'desc' }],
+            distinct: ['webhookId'],
+            select: { id: true, webhookId: true, event: true, errorMessage: true, responseStatus: true, createdAt: true },
+          })
+        : Promise.resolve([]),
+    ])
+
+    const tally = (rows: typeof counts7d, webhookId: string, succeeded: boolean) =>
+      rows.find(r => r.webhookId === webhookId && r.succeeded === succeeded)?._count._all ?? 0
+
+    const webhookHealth = webhooks.map(w => {
+      const ok7d = tally(counts7d, w.id, true), fail7d = tally(counts7d, w.id, false)
+      const ok24h = tally(counts24h, w.id, true), fail24h = tally(counts24h, w.id, false)
+      const lastFailure = lastFailures.find(f => f.webhookId === w.id) ?? null
+      // Health state: failing = 3+ consecutive failures (worker resets
+      // failureCount to 0 on any success); degraded = recent failures but
+      // not a dead endpoint; healthy = no failures in the 7d window.
+      const health =
+        !w.enabled            ? 'disabled' :
+        w.failureCount >= 3   ? 'failing'  :
+        (w.failureCount > 0 || fail7d > 0) ? 'degraded' :
+        'healthy'
+      return {
+        id: w.id, name: w.name, url: w.url, type: w.type, enabled: w.enabled,
+        events: w.events,
+        health,
+        lastDeliveryAt: w.lastDeliveryAt, lastDeliveryStatus: w.lastDeliveryStatus,
+        consecutiveFailures: w.failureCount,
+        deliveries: { ok24h, fail24h, ok7d, fail7d },
+        lastFailure: lastFailure
+          ? { deliveryId: lastFailure.id, event: lastFailure.event, errorMessage: lastFailure.errorMessage, responseStatus: lastFailure.responseStatus, at: lastFailure.createdAt }
+          : null,
+      }
+    })
+
+    const apiKeys = await prisma.apiKey.findMany({
+      where: { orgId, revokedAt: null },
+      select: { expiresAt: true, lastUsedAt: true },
+    })
+    const in30d = new Date(now + 30 * 24 * 60 * 60 * 1000)
+    const total7dOk   = counts7d.filter(r => r.succeeded).reduce((s, r) => s + r._count._all, 0)
+    const total7dFail = counts7d.filter(r => !r.succeeded).reduce((s, r) => s + r._count._all, 0)
+
+    return reply.send({
+      webhooks: webhookHealth,
+      summary: {
+        healthy:  webhookHealth.filter(w => w.health === 'healthy').length,
+        degraded: webhookHealth.filter(w => w.health === 'degraded').length,
+        failing:  webhookHealth.filter(w => w.health === 'failing').length,
+        disabled: webhookHealth.filter(w => w.health === 'disabled').length,
+        deliveries24h: counts24h.reduce((s, r) => s + r._count._all, 0),
+        failed24h:     counts24h.filter(r => !r.succeeded).reduce((s, r) => s + r._count._all, 0),
+        successRate7d: total7dOk + total7dFail > 0
+          ? Math.round((total7dOk / (total7dOk + total7dFail)) * 100)
+          : null,
+      },
+      apiKeys: {
+        active:       apiKeys.length,
+        expiringSoon: apiKeys.filter(k => k.expiresAt && k.expiresAt <= in30d && k.expiresAt > new Date(now)).length,
+        lastUsedAt:   apiKeys.reduce<Date | null>((max, k) =>
+          k.lastUsedAt && (!max || k.lastUsedAt > max) ? k.lastUsedAt : max, null),
+      },
+    })
+  })
+
+  // ── POST /webhooks/:id/deliveries/:deliveryId/retry (Phase 10) ───────
+  // Requeue a failed delivery with its original event + payload.
+  app.post('/webhooks/:id/deliveries/:deliveryId/retry', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { id, deliveryId } = req.params as { id: string; deliveryId: string }
+    const { orgId } = req.user
+    const wh = await prisma.webhook.findFirst({
+      where: { id, orgId, deletedAt: null },
+      select: { id: true, enabled: true },
+    })
+    if (!wh) return reply.status(404).send({ detail: 'Webhook not found' })
+    if (!wh.enabled) return reply.status(400).send({ detail: 'Webhook is disabled — enable it before retrying' })
+
+    const delivery = await prisma.webhookDelivery.findFirst({
+      where: { id: deliveryId, webhookId: id },
+      select: { id: true, event: true, payload: true, succeeded: true },
+    })
+    if (!delivery) return reply.status(404).send({ detail: 'Delivery not found' })
+    if (delivery.succeeded) return reply.status(400).send({ detail: 'Delivery already succeeded' })
+
+    await queueWebhookDelivery({
+      webhookId: id,
+      event:     delivery.event,
+      payload:   delivery.payload as Record<string, unknown>,
+    })
+    return reply.send({ ok: true, message: 'Retry queued' })
   })
 
   // ── GET /webhooks/:id/deliveries — recent delivery log ──────────────
