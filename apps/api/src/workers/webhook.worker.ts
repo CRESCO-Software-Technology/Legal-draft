@@ -18,6 +18,7 @@ import { redis } from '../lib/redis.js'
 import { prisma } from '../lib/prisma.js'
 import type { WebhookDeliveryJob } from '../lib/queue.js'
 import { formatForSlack } from '../lib/slack-formatter.js'
+import { formatForTeams } from '../lib/teams-formatter.js'
 
 async function handleWebhookDelivery(data: WebhookDeliveryJob) {
   const wh = await prisma.webhook.findUnique({
@@ -44,8 +45,12 @@ async function handleWebhookDelivery(data: WebhookDeliveryJob) {
   // of JSON dumps. Slack ignores the HMAC headers (which is fine; their
   // URL itself is the auth) but we still send the signature for any
   // self-hosted Slack-compatible receiver.
+  // Phase 10 — 'teams' formats as an Adaptive Card for Teams Workflows
+  // webhooks, same idea as the Slack-blocks path.
   const body = wh.type === 'slack'
     ? JSON.stringify(formatForSlack(data.event, data.payload))
+    : wh.type === 'teams'
+    ? JSON.stringify(formatForTeams(data.event, data.payload))
     : JSON.stringify({ event: data.event, timestamp: new Date().toISOString(), data: data.payload })
   const signature = crypto.createHmac('sha256', wh.secret).update(body).digest('hex')
 

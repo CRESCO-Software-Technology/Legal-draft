@@ -38,7 +38,7 @@ interface Webhook {
   url:                string
   events:             string[]
   enabled:            boolean
-  type:               'generic' | 'slack'
+  type:               'generic' | 'slack' | 'teams'
   lastDeliveryAt:     string | null
   lastDeliveryStatus: string | null
   failureCount:       number
@@ -502,12 +502,13 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
 }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
-  const [type, setType] = useState<'generic' | 'slack'>('generic')
+  const [type, setType] = useState<'generic' | 'slack' | 'teams'>('generic')
   const [selectedEvents, setSelectedEvents] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  // Auto-detect: paste a Slack URL and we'll flip the type for them.
+  // Auto-detect: paste a Slack / Teams URL and we'll flip the type for them.
   const detectedSlack = /^https:\/\/hooks\.slack\.com\//.test(url.trim())
-  const effectiveType = detectedSlack ? 'slack' : type
+  const detectedTeams = /https:\/\/[^/]+\.(logic\.azure\.com|webhook\.office\.com|powerplatform\.com)(:\d+)?\//.test(url.trim())
+  const effectiveType = detectedSlack ? 'slack' : detectedTeams ? 'teams' : type
 
   const create = useMutation({
     mutationFn: async () => api.post('/admin/integrations/webhooks', {
@@ -549,9 +550,14 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
                 <Check className="h-3 w-3" /> Slack URL detected — events will be formatted as Slack messages.
               </p>
             )}
+            {detectedTeams && (
+              <p className="text-[11px] text-emerald-700 mt-1 inline-flex items-center gap-1">
+                <Check className="h-3 w-3" /> Teams workflow URL detected — events will be formatted as Adaptive Cards.
+              </p>
+            )}
           </div>
 
-          {!detectedSlack && (
+          {!detectedSlack && !detectedTeams && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Format</label>
               <div className="flex gap-2">
@@ -576,6 +582,17 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
                 >
                   <div className="font-medium text-gray-900">Slack blocks</div>
                   <div className="text-[11px] text-gray-500">Pretty rendering for Slack-compatible receivers</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType('teams')}
+                  className={`flex-1 text-left p-2.5 rounded-md border text-sm transition-colors ${
+                    type === 'teams' ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-300' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  data-testid="type-teams"
+                >
+                  <div className="font-medium text-gray-900">Teams card</div>
+                  <div className="text-[11px] text-gray-500">Adaptive Cards for Teams Workflows webhooks</div>
                 </button>
               </div>
             </div>
@@ -624,7 +641,7 @@ interface WebhookHealth {
   id: string
   name: string
   url: string
-  type: 'generic' | 'slack'
+  type: 'generic' | 'slack' | 'teams'
   enabled: boolean
   events: string[]
   health: 'healthy' | 'degraded' | 'failing' | 'disabled'

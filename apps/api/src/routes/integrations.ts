@@ -33,6 +33,7 @@ import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { hashApiKey, API_KEY_PREFIX } from '../middleware/auth.js'
 import { queueWebhookDelivery } from '../lib/queue.js'
+import { isTeamsUrl } from '../lib/teams-formatter.js'
 
 // Canonical list of events a webhook can subscribe to. Keep stable —
 // these are part of the public API contract.
@@ -66,7 +67,7 @@ const CreateWebhookSchema = z.object({
   url:     z.string().url().max(2000),
   events:  z.array(z.string()).min(1),
   enabled: z.boolean().optional(),
-  type:    z.enum(['generic', 'slack']).optional(),
+  type:    z.enum(['generic', 'slack', 'teams']).optional(),
 })
 
 const PatchWebhookSchema = z.object({
@@ -166,11 +167,13 @@ export async function integrationsRoutes(app: FastifyInstance) {
     }
     const { orgId, sub: userId } = req.user
 
-    // Auto-detect Slack URLs if user didn't specify a type. Saves a
-    // step for the common case where they paste a hooks.slack.com URL.
+    // Auto-detect Slack / Teams URLs if user didn't specify a type. Saves
+    // a step for the common case where they paste a known webhook URL.
     let webhookType = body.type ?? 'generic'
     if (!body.type && body.url.startsWith('https://hooks.slack.com/')) {
       webhookType = 'slack'
+    } else if (!body.type && isTeamsUrl(body.url)) {
+      webhookType = 'teams'
     }
 
     const created = await prisma.webhook.create({
