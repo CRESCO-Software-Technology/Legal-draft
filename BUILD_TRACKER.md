@@ -1056,8 +1056,8 @@ After (Phase 3.3):
 - [x] Inbound email parsing: `contracts+<contractId>@…` → new version via SendGrid Inbound Parse (`routes/inbound-email.ts`; sender validation, PDF/DOCX attach, flips to UNDER_NEGOTIATION)
 
 #### Agents (Phase 10 scope)
-- [ ] Integration Agent: bidirectional CRM sync orchestration
-- [ ] Integration Agent: ERP invoice-to-obligation matching
+- [ ] Integration Agent: bidirectional CRM sync orchestration *(blocked on Salesforce connector)*
+- [~] Integration Agent: ERP invoice-to-obligation matching — the matching engine already shipped in P8 Step 9 (`routes/invoices.ts`: scored auto-matcher on counterparty/amount/currency/description + reconcile/dispute/rematch + `invoice.reconciled` webhook). Missing piece is only ERP-side ingestion (SAP/NetSuite invoice pull), blocked on those connectors
 - [x] Compliance Agent: regulatory clause checks (GDPR, HIPAA, SOX, CCPA) — `apps/agents/app/routes/compliance.py`, `apps/api/src/lib/compliance-check.ts`, `POST /contracts/:id/compliance-check` + `GET /:id/compliance`, `ComplianceRailSection.tsx`; report persisted to `metadata._compliance`, `COMPLIANCE_CHECKED` audit event
 
 ---
