@@ -9,6 +9,7 @@ import { renderHtmlToPdfAndStore } from '../lib/gotenberg.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { extractObligationsForContract } from '../lib/obligation-extract.js'
+import { runComplianceCheck, COMPLIANCE_FRAMEWORKS } from '../lib/compliance-check.js'
 import { generateCompliancePackage } from '../lib/compliance-export.js'
 import { buildCsv, parseCsv } from '../lib/csv.js'
 import { fireWebhook } from '../lib/webhook-events.js'
@@ -2003,6 +2004,66 @@ export async function contractRoutes(app: FastifyInstance) {
       summary:     (md.obligationsSummary as string | null) ?? null,
       extractedAt: (md.obligationsExtractedAt as string | null) ?? null,
     })
+  })
+
+  // ── POST /:id/compliance-check (Phase 10 — Compliance Agent) ─────────────
+  // Runs GDPR / HIPAA / SOX / CCPA regulatory clause checks on the current
+  // version's plaintext. Persists the report onto Contract.metadata._compliance.
+  app.post('/:id/compliance-check', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { orgId } = req.user
+    const body = (req.body ?? {}) as { frameworks?: string[] }
+    if (body.frameworks !== undefined) {
+      if (!Array.isArray(body.frameworks)
+        || body.frameworks.some(f => !(COMPLIANCE_FRAMEWORKS as readonly string[]).includes(f))) {
+        return reply.status(400).send({
+          detail: `frameworks must be a subset of: ${COMPLIANCE_FRAMEWORKS.join(', ')}`,
+        })
+      }
+    }
+    try {
+      const result = await runComplianceCheck({
+        orgId, contractId: id, userId: req.user.sub, frameworks: body.frameworks,
+      })
+      if (result.skippedReason === 'no version') {
+        return reply.status(400).send({ detail: 'No version to check' })
+      }
+      if (result.skippedReason === 'no plaintext') {
+        return reply.status(400).send({ detail: 'No plaintext on current version' })
+      }
+      if (result.error?.startsWith('contract not found')) {
+        return reply.status(404).send({ detail: 'Contract not found' })
+      }
+      if (result.error?.startsWith('agents service error')) {
+        return reply.status(502).send({ detail: 'compliance agent failed', upstream: result.error })
+      }
+      if (!result.ok || !result.report) {
+        return reply.status(502).send({ detail: 'compliance agent failed', upstream: result.error })
+      }
+      return reply.send({ ok: true, report: result.report })
+    } catch (err) {
+      if (err instanceof CostCapExceededError) {
+        return reply.status(429).send({
+          detail: `Daily AI cost cap reached ($${err.usedUsd.toFixed(2)} of $${err.capUsd.toFixed(2)}). Try again tomorrow or raise the cap in Admin → AI Config.`,
+          retryAfter: 86400,
+        })
+      }
+      throw err
+    }
+  })
+
+  // ── GET /:id/compliance (Phase 10) ────────────────────────────────────────
+  // Returns the last persisted compliance report (or null when never run).
+  app.get('/:id/compliance', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { orgId } = req.user
+    const contract = await prisma.contract.findFirst({
+      where: { id, orgId, deletedAt: null },
+      select: { id: true, metadata: true },
+    })
+    if (!contract) return reply.status(404).send({ detail: 'Contract not found' })
+    const md = (contract.metadata ?? {}) as Record<string, unknown>
+    return reply.send({ report: (md._compliance as Record<string, unknown> | undefined) ?? null })
   })
 
   // ── POST /:id/renewal-advice (P5.3 — Wave H.3) ──────────────────────────

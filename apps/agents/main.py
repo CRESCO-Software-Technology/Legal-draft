@@ -16,6 +16,7 @@ from app.routes import redline
 from app.routes import approval
 from app.routes import obligations
 from app.routes import renewals
+from app.routes import compliance
 from app import tracing
 
 logging.basicConfig(
@@ -75,6 +76,7 @@ app.include_router(redline.router)
 app.include_router(approval.router)
 app.include_router(obligations.router)
 app.include_router(renewals.router)
+app.include_router(compliance.router)
 
 
 @app.get("/health")

@@ -28,6 +28,7 @@ import { CommentsPanel } from '@/components/contracts/CommentsPanel'
 import { ShareLinkDialog } from '@/components/contracts/ShareLinkDialog'
 import { ContractMatterPicker } from '@/components/contracts/ContractMatterPicker'
 import { ObligationsRailSection } from '@/components/contracts/ObligationsRailSection'
+import { ComplianceRailSection } from '@/components/contracts/ComplianceRailSection'
 import { MatterRailSection } from '@/components/contracts/MatterRailSection'
 import { RenewalAdviceRailSection, type RenewalAdvice } from '@/components/contracts/RenewalAdviceRailSection'
 import { BubbleAiPopover } from '@/components/contracts/BubbleAiPopover'
@@ -3109,6 +3110,16 @@ export function ContractDetailPage() {
             qc.invalidateQueries({ queryKey: ['contract', id] })
           }}
         />
+
+        {/* Phase 10 — Compliance Agent. GDPR / HIPAA / SOX / CCPA clause
+            checks with per-framework status, grounded quotes, and
+            remediation suggestions. Empty state offers a run button. */}
+        {id && (
+          <ComplianceRailSection
+            contractId={id}
+            onAfterCheck={() => qc.invalidateQueries({ queryKey: ['contract', id] })}
+          />
+        )}
 
         {/* P6.4 — Defined-term guard. Surfaces canonical defined
             terms + any inconsistent author-typed variants + an
