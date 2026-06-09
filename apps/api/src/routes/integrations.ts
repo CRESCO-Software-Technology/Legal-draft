@@ -14,6 +14,11 @@
  *     POST   /admin/integrations/webhooks/:id/test    — fire a synthetic event
  *     GET    /admin/integrations/webhooks/:id/deliveries — recent delivery log
  *
+ *   Slack (Phase 10 — Slack bot setup):
+ *     GET    /admin/integrations/slack                 — current config (secrets masked)
+ *     PUT    /admin/integrations/slack                 — save teamId / signingSecret / botToken
+ *     DELETE /admin/integrations/slack                 — disconnect
+ *
  *   Health (Phase 10 — integration health dashboard):
  *     GET    /admin/integrations/health               — per-webhook health + delivery aggregates
  *     POST   /admin/integrations/webhooks/:id/deliveries/:deliveryId/retry — requeue a failed delivery
@@ -248,6 +253,68 @@ export async function integrationsRoutes(app: FastifyInstance) {
       },
     })
     return reply.send({ ok: true, message: 'Test delivery queued' })
+  })
+
+  // ── Slack config (Phase 10 — Slack bot setup wizard) ─────────────────
+  // Stored on organization.settings.slack. The signing secret authenticates
+  // inbound /slack/commands + /slack/interactions; the optional bot token
+  // lets button clicks resolve to CLM users (users:read.email scope).
+  app.get('/slack', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } })
+    const slack = ((org?.settings as Record<string, unknown> | null)?.slack ?? null) as
+      { teamId?: string; signingSecret?: string; botToken?: string; configuredAt?: string } | null
+    if (!slack?.teamId) return reply.send({ connected: false })
+    return reply.send({
+      connected:        true,
+      teamId:           slack.teamId,
+      configuredAt:     slack.configuredAt ?? null,
+      hasSigningSecret: Boolean(slack.signingSecret),
+      hasBotToken:      Boolean(slack.botToken),
+    })
+  })
+
+  app.put('/slack', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    let body
+    try {
+      body = z.object({
+        teamId:        z.string().min(1).max(50),
+        signingSecret: z.string().min(1).max(200),
+        botToken:      z.string().max(300).optional(),
+      }).parse(req.body)
+    } catch (err) {
+      return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
+    }
+    if (body.botToken && !body.botToken.startsWith('xoxb-')) {
+      return reply.status(400).send({ detail: 'Bot token must start with xoxb-' })
+    }
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } })
+    const settings = (org?.settings ?? {}) as Record<string, unknown>
+    await prisma.organization.update({
+      where: { id: orgId },
+      data: {
+        settings: {
+          ...settings,
+          slack: {
+            teamId:        body.teamId.trim(),
+            signingSecret: body.signingSecret.trim(),
+            ...(body.botToken ? { botToken: body.botToken.trim() } : {}),
+            configuredAt:  new Date().toISOString(),
+          },
+        } as never,
+      },
+    })
+    return reply.send({ ok: true })
+  })
+
+  app.delete('/slack', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } })
+    const settings = { ...((org?.settings ?? {}) as Record<string, unknown>) }
+    delete settings.slack
+    await prisma.organization.update({ where: { id: orgId }, data: { settings: settings as never } })
+    return reply.status(204).send()
   })
 
   // ── GET /health — integration health dashboard (Phase 10) ────────────

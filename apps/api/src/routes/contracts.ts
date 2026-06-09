@@ -1922,6 +1922,20 @@ export async function contractRoutes(app: FastifyInstance) {
       metadata:     { instanceId: instance.inst.id, workflowId: workflow.id },
     }).catch(() => {})
 
+    // Phase 10 — Slack/webhook subscribers get an actionable card with
+    // Approve/Reject buttons (slack-formatter adds them for type=slack).
+    fireWebhook(orgId, 'approval.submitted', {
+      contractId,
+      title:      contract.title,
+      type:       contract.type,
+      value:      contract.value != null ? Number(contract.value) : null,
+      currency:   contract.currency,
+      instanceId: instance.inst.id,
+      stepId:     instance.step.id,
+      stepName:   firstStepDef.name,
+      approverId: firstApproverId,
+    }).catch(() => {})
+
     return reply.status(201).send({
       instanceId:           instance.inst.id,
       contractId,

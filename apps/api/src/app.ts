@@ -55,6 +55,7 @@ import { cronRoutes } from './routes/cron.js'
 import { signatureRoutes } from './routes/signatures.js'
 import { inboundEmailRoutes } from './routes/inbound-email.js'
 import { marketingRoutes } from './routes/marketing.js'
+import { slackRoutes } from './routes/slack.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { assertRouterConfigured } from './lib/aiRouter.js'
 
@@ -231,6 +232,9 @@ export async function buildApp() {
   // P7.6.3 — Inbound email parser webhook (SendGrid / Mailgun target)
   await app.register(inboundEmailRoutes,   { prefix: '/api/v1/inbound' })
   await app.register(marketingRoutes,      { prefix: '/api/v1/marketing' })
+  // Phase 10 — Slack slash command + interactive buttons (public; signed
+  // by the org's Slack signing secret rather than a user JWT).
+  await app.register(slackRoutes,          { prefix: '/api/v1/slack' })
 
   // D.0.3 — log the platform routing table at boot; throws if a critical
   // tier (default, fast) has no platform key set.

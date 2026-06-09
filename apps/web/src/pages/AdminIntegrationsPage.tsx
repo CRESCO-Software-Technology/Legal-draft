@@ -18,7 +18,7 @@ import { usePermission } from '@/lib/permissions'
 import {
   Plug, Plus, Loader2, Copy, Check, Trash2, X, Send, AlertCircle, Lock,
   Key, Webhook as WebhookIcon, ChevronRight, ChevronDown,
-  Activity, RefreshCw,
+  Activity, RefreshCw, MessageSquare,
 } from 'lucide-react'
 
 interface ApiKey {
@@ -57,7 +57,7 @@ interface Delivery {
   deliveredAt:    string | null
 }
 
-type Tab = 'keys' | 'webhooks' | 'health'
+type Tab = 'keys' | 'webhooks' | 'slack' | 'health'
 
 export function AdminIntegrationsPage() {
   const [tab, setTab] = useState<Tab>('keys')
@@ -106,12 +106,18 @@ export function AdminIntegrationsPage() {
         <TabButton active={tab === 'webhooks'} onClick={() => setTab('webhooks')} testId="tab-webhooks">
           <WebhookIcon className="h-4 w-4" /> Webhooks
         </TabButton>
+        <TabButton active={tab === 'slack'} onClick={() => setTab('slack')} testId="tab-slack">
+          <MessageSquare className="h-4 w-4" /> Slack
+        </TabButton>
         <TabButton active={tab === 'health'} onClick={() => setTab('health')} testId="tab-health">
           <Activity className="h-4 w-4" /> Health
         </TabButton>
       </div>
 
-      {tab === 'keys' ? <ApiKeysSection /> : tab === 'webhooks' ? <WebhooksSection /> : <HealthSection />}
+      {tab === 'keys' ? <ApiKeysSection />
+        : tab === 'webhooks' ? <WebhooksSection />
+        : tab === 'slack' ? <SlackSection />
+        : <HealthSection />}
     </div>
   )
 }
@@ -840,6 +846,182 @@ function SummaryCard({ label, value, sub, tone, testId }: {
       <div className="text-[11px] uppercase tracking-wider text-gray-400 font-medium">{label}</div>
       <div className={`text-xl font-semibold mt-0.5 ${toneCls}`}>{value}</div>
       <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
+    </div>
+  )
+}
+
+// ─── Slack (Phase 10 — Slack bot setup wizard) ─────────────────────────
+
+interface SlackConfig {
+  connected: boolean
+  teamId?: string
+  configuredAt?: string | null
+  hasSigningSecret?: boolean
+  hasBotToken?: boolean
+}
+
+const API_BASE = `${window.location.origin}/api/v1`
+
+const SLACK_MANIFEST = JSON.stringify({
+  display_information: { name: 'draftLegal', description: 'Contract search + approvals from Slack' },
+  features: {
+    bot_user: { display_name: 'draftLegal', always_online: true },
+    slash_commands: [{
+      command: '/contract',
+      url: `${API_BASE}/slack/commands`,
+      description: 'Search contracts',
+      usage_hint: 'search <query>',
+    }],
+  },
+  oauth_config: { scopes: { bot: ['commands', 'incoming-webhook', 'users:read', 'users:read.email'] } },
+  settings: {
+    interactivity: { is_enabled: true, request_url: `${API_BASE}/slack/interactions` },
+    org_deploy_enabled: false,
+    socket_mode_enabled: false,
+  },
+}, null, 2)
+
+function SlackSection() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery<SlackConfig>({
+    queryKey: ['slack-config'],
+    queryFn:  () => api.get('/admin/integrations/slack').then(r => r.data),
+  })
+
+  const [teamId, setTeamId] = useState('')
+  const [signingSecret, setSigningSecret] = useState('')
+  const [botToken, setBotToken] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [copiedManifest, setCopiedManifest] = useState(false)
+
+  const save = useMutation({
+    mutationFn: async () => api.put('/admin/integrations/slack', {
+      teamId: teamId.trim(),
+      signingSecret: signingSecret.trim(),
+      ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
+    }),
+    onSuccess: () => {
+      setTeamId(''); setSigningSecret(''); setBotToken(''); setError(null)
+      qc.invalidateQueries({ queryKey: ['slack-config'] })
+    },
+    onError: (err: { response?: { data?: { detail?: string } } }) =>
+      setError(err.response?.data?.detail ?? 'Failed to save.'),
+  })
+
+  const disconnect = useMutation({
+    mutationFn: async () => api.delete('/admin/integrations/slack'),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['slack-config'] }),
+  })
+
+  if (isLoading) return <div className="py-12 flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-gray-300" /></div>
+
+  if (data?.connected) {
+    return (
+      <div className="max-w-2xl" data-testid="slack-connected">
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <h2 className="text-sm font-semibold text-gray-900">Slack workspace connected</h2>
+          </div>
+          <dl className="text-sm space-y-2">
+            <div className="flex justify-between"><dt className="text-gray-500">Workspace (team ID)</dt><dd className="font-mono text-xs text-gray-900">{data.teamId}</dd></div>
+            <div className="flex justify-between"><dt className="text-gray-500">Signing secret</dt><dd className="text-emerald-700 text-xs">configured</dd></div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Bot token (button-click identity)</dt>
+              <dd className={data.hasBotToken ? 'text-emerald-700 text-xs' : 'text-amber-700 text-xs'}>
+                {data.hasBotToken ? 'configured' : 'not set — buttons fall back to web links'}
+              </dd>
+            </div>
+            {data.configuredAt && (
+              <div className="flex justify-between"><dt className="text-gray-500">Connected</dt><dd className="text-xs text-gray-600">{new Date(data.configuredAt).toLocaleString()}</dd></div>
+            )}
+          </dl>
+          <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+            <p>• <code className="bg-gray-100 px-1 rounded">/contract search &lt;query&gt;</code> works in any channel the app is in.</p>
+            <p>• Approval requests post Approve / Reject buttons via your <button className="text-indigo-600 hover:underline" onClick={() => { /* tab switch hint */ }}>Slack webhook</button> — add one on the Webhooks tab (paste a hooks.slack.com URL) subscribed to <code className="bg-gray-100 px-1 rounded">approval.submitted</code>.</p>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={() => { if (confirm('Disconnect Slack? Slash commands and approval buttons will stop working.')) disconnect.mutate() }}
+              data-testid="slack-disconnect"
+              className="text-xs text-red-600 hover:text-red-700 inline-flex items-center gap-1"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Disconnect
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl space-y-4" data-testid="slack-setup">
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">1 · Create the Slack app</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">api.slack.com/apps</a> →
+          “Create New App” → “From a manifest”, pick your workspace, and paste this manifest. It pre-wires the
+          <code className="bg-gray-100 px-1 rounded mx-1">/contract</code> command and the Approve/Reject interactivity URL.
+        </p>
+        <div className="relative">
+          <pre className="text-[10.5px] bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto max-h-48" data-testid="slack-manifest">{SLACK_MANIFEST}</pre>
+          <button
+            onClick={() => { navigator.clipboard.writeText(SLACK_MANIFEST); setCopiedManifest(true); setTimeout(() => setCopiedManifest(false), 1500) }}
+            className="absolute top-2 right-2 p-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+            data-testid="slack-copy-manifest"
+            aria-label="Copy manifest"
+          >
+            {copiedManifest ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mt-3">
+          Slack must be able to reach these URLs — in local dev use a tunnel (ngrok / cloudflared) and adjust the manifest.
+        </p>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">2 · Connect it here</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          From the app's <span className="font-medium">Basic Information</span> page copy the <span className="font-medium">Signing Secret</span>;
+          the <span className="font-medium">Team ID</span> (starts with T) is in your Slack workspace URL or app install page. The bot token
+          (<span className="font-mono">xoxb-…</span>, after installing the app) is optional but lets Approve/Reject clicks act as the matching draftLegal user.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Team ID</label>
+            <Input value={teamId} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTeamId(e.target.value)} placeholder="T0123ABCD" data-testid="slack-team-id" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Signing secret</label>
+            <Input value={signingSecret} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSigningSecret(e.target.value)} placeholder="8f742231b10e8888abcd99yyyzzz85a5" type="password" data-testid="slack-signing-secret" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bot token <span className="text-gray-400 font-normal">(optional)</span></label>
+            <Input value={botToken} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBotToken(e.target.value)} placeholder="xoxb-…" type="password" data-testid="slack-bot-token" />
+          </div>
+          {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">{error}</div>}
+          <div className="flex justify-end">
+            <Button
+              onClick={() => save.mutate()}
+              disabled={!teamId.trim() || !signingSecret.trim() || save.isPending}
+              data-testid="slack-save"
+              className="bg-indigo-600 hover:bg-indigo-700"
+            >
+              {save.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Connecting…</> : 'Connect Slack'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">3 · Notifications channel</h2>
+        <p className="text-xs text-gray-500">
+          On the <span className="font-medium">Webhooks</span> tab, add your Slack incoming-webhook URL
+          (<span className="font-mono">hooks.slack.com/…</span>) subscribed to the events you care about —
+          include <code className="bg-gray-100 px-1 rounded">approval.submitted</code> to get actionable
+          Approve/Reject cards in the channel.
+        </p>
+      </div>
     </div>
   )
 }
