@@ -1,7 +1,7 @@
 # CLM Platform — End-to-End Build Tracker
 
 > **Single source of truth** for all build progress. Update this file after every session.
-> Last updated: 2026-05-02 (P1–P84 probe suite + agent-quality push complete — `docs/33-AGENT-UPDATES-PLAN.md` parked)
+> Last updated: 2026-06-10 (Phase 10 checklist audit — checked off items already shipped; note: `docs/33-AGENT-UPDATES-PLAN.md` referenced below was never committed to the repo)
 
 ---
 
@@ -1021,36 +1021,39 @@ After (Phase 3.3):
 
 ### Phase 10 — Integrations & Scale
 **Duration:** 3–4 weeks
-**Status:** `[ ] Not Started`
+**Status:** `[~] In Progress`
+**Started:** 2026-04-28
 **Acceptance:** Platform is fully usable without any of these. Phase 10 adds external reach, not core function.
 
 > **Design principle:** Every item here is additive. Phases 01–09 are a complete, production-ready CLM. Phase 10 is pure enhancement. Build in order of business value; ship any subset independently.
 
+> **2026-06-10 checklist audit:** several items below were already shipped during Phases 6.5–09 and earlier sessions but never checked off here. Verified against code and marked accordingly.
+
 #### Core Admin (build first — these support the platform itself)
-- [ ] Bulk CSV import: upload → validate → preview → confirm → BullMQ job → monitor progress
-- [ ] RBAC manager: admin UI to create roles, assign permissions
-- [ ] Onboarding setup wizard: org name, logo, first template, first user invite
-- [ ] Admin settings panel (org config, notification defaults, feature flags)
-- [ ] Team workload view (who has what in their queue)
-- [ ] Performance: DB query optimization, Redis caching layers
+- [x] Bulk CSV import: upload → validate → preview → confirm → per-row results (`POST /contracts/bulk-import`, `lib/csv.ts`, `BulkImportDialog.tsx`; verified by probe P59)
+- [x] RBAC manager: admin UI to create roles, assign permissions (`AdminRolesPage.tsx`, `routes/admin-users.ts`; verified by probe P60)
+- [x] Onboarding setup wizard (`OnboardingWizard.tsx` — industry pack + first contract; invites via dashboard WelcomeChecklist)
+- [x] Admin settings panel (`AdminOrgPage.tsx` — General / Alert Rules / AI Config / System Dashboard / Data Management; flags in `organization.settings` JSONB)
+- [x] Team workload view (`TeamPage.tsx`, `GET /team/workload`)
+- [~] Performance: targeted indexes (orgId+status, versionId+isSubChunk, pgvector IVFFlat) + Redis caching for cost caps & agent session memory — no systematic query-plan pass yet
 
 #### Communication Integrations (high value, lower effort)
-- [ ] Slack bot: contract notifications, inline approval actions, `/contract search`
+- [~] Slack: outbound notifications via webhook (`lib/slack-formatter.ts` + webhook auto-detect) — missing `/contract` slash command, inline approval actions, setup wizard
 - [ ] Slack bot setup wizard (OAuth, channel config)
 - [ ] Microsoft Teams bot (botbuilder): same feature set as Slack bot
-- [ ] Email notifications: SendGrid dynamic templates (1 per event type)
+- [~] Email notifications: Nodemailer SMTP in `notification.worker.ts` + signing emails (`lib/signing-email.ts`) — SendGrid dynamic templates not adopted (SMTP works self-hosted; revisit only if deliverability demands it)
 
 #### CRM / ERP Integrations (high effort — timebox 2 days each)
 - [ ] Salesforce connector: OAuth 2.0, opportunity → contract request sync
 - [ ] Salesforce → contract auto-creation when deal closes
 - [ ] SAP/NetSuite: purchase order → contract request, invoice → obligation match
-- [ ] Integration settings page (connect/disconnect, OAuth flow per provider)
+- [~] Integration settings page (`AdminIntegrationsPage.tsx` — API keys + webhooks CRUD; no per-provider OAuth connect/disconnect yet)
 - [ ] Integration health dashboard (last sync time, error counts, retry)
 
 #### Email / Inbox Integrations
 - [ ] Gmail add-in: create contract request from email thread
 - [ ] Outlook add-in: same
-- [ ] Inbound email parsing: forward contract@yourapp.com → creates request (imapflow)
+- [x] Inbound email parsing: `contracts+<contractId>@…` → new version via SendGrid Inbound Parse (`routes/inbound-email.ts`; sender validation, PDF/DOCX attach, flips to UNDER_NEGOTIATION)
 
 #### Agents (Phase 10 scope)
 - [ ] Integration Agent: bidirectional CRM sync orchestration
@@ -1124,7 +1127,7 @@ After (Phase 3.3):
 | 2026-05-01 | **Long-context single-pass for review summarisation** (`_CHUNK_SIZE = 120_000`, was 40K; significantClauses passed to score step) | Sonnet's context window can take 120K tokens of clause text in one call — chunking adds latency and loses cross-clause reasoning. Bumped chunk size; pass high-signal clauses (e.g. liability, IP, termination) to the score step as a focused second view. Net: better risk scoring on long contracts, fewer LLM round-trips. |
 | 2026-05-01 | **Smart Import second-pass extraction for missing required keys** | First-pass extraction occasionally misses required fields (parties, term_length, governing_law, total_value) on noisy or multi-party contracts. Second focused pass over the same text targeting only the missing keys recovers most of them at low cost. Better than retrying the whole pipeline or returning blanks. |
 | 2026-05-01 | **`sign` permission distinct from `configure`** on contract.signatures (send / remind / void) | Send-for-signature was gated on `configure:contract` which conflated "configure the contract" with "act as signer admin". Split: `sign:contract` for envelope ops; `configure:contract` reserved for metadata/structural changes. Refresh-system-role-perms script syncs all 219 system roles in one shot. |
-| 2026-05-02 | **`docs/33-AGENT-UPDATES-PLAN.md` is the agent backlog** | Park doc capturing where the agent stack is after P1–P84 + ~30 fixes, gap matrix vs Harvey/Ironclad, Tier 1/2/3 backlog, decisions queue, success metrics. Source of truth for the next agent push; deliberately scoped narrow ("doesn't promise X yet") so we don't over-commit on scheduled-reports / page-anchors / cross-encoder reranker before the simpler wins land. |
+| 2026-05-02 | **`docs/33-AGENT-UPDATES-PLAN.md` is the agent backlog** *(⚠ 2026-06-10: file missing from repo — was never committed; reconstruct or re-park before next agent push)* | Park doc capturing where the agent stack is after P1–P84 + ~30 fixes, gap matrix vs Harvey/Ironclad, Tier 1/2/3 backlog, decisions queue, success metrics. Source of truth for the next agent push; deliberately scoped narrow ("doesn't promise X yet") so we don't over-commit on scheduled-reports / page-anchors / cross-encoder reranker before the simpler wins land. |
 
 ---
 
@@ -1162,6 +1165,7 @@ After (Phase 3.3):
 | 2026-04-29 | audit/P61–P78 | **Agent quality deep dive (18 probes).** P61 draft from explicit template ID, P62 artifact dedup, P63 groundedness (no fabrication), P64 multi-turn tool memory, P65 tool honesty (no fake calls), P66 citation accuracy, P67 cross-tool synthesis, P68 refusal calibration, P69 tool efficiency budget, P70 skill systemPrompt obeyed, P71 streaming chunks ordered, P72 ActionPreview chip apply, P73 tool-error recovery, P74 prompt-injection defense, P75 fact consistency across turns, P76 output format adherence, P77 latency budgets, P78 cost-per-turn cap. Real bugs surfaced + fixed: (a) **multi-turn memory loss** — agent forgot contract IDs between turns; `memory.append_to_session` now persists `tool_calls` + `tool_results` and restores them as `AIMessage(tool_calls)` + `ToolMessage` chain on next turn. (b) **`contract_search` lied about totals** — returned `total: results.length` so it claimed "50 contracts" when real count was 313; added `totalMatching` field with real DB count + orchestrator rule A11. (c) **`contract_update` silently no-op'd** with empty `payload: {}`; added required-keys validation per action returning structured `missing_payload_keys` error. (d) **over-asks for confirmation** — added COMMIT-DON'T-CONFIRM rule to orchestrator system prompt. (e) **artifact pane stacked duplicates** — added stable `dedupeKey` to every artifact factory in `artifact-from-tool.ts`, consumer replaces existing. (f) **agent-chat proxy crashed API** with `ERR_HTTP_HEADERS_SENT` on body timeout — fixed with `reply.hijack()`, `clientGone` flag, guarded writes against `writableEnded`. Probe regex tightened on P63/P67/P68/P73/P75 for LLM phrasing variations. | None |
 | 2026-04-30 | retrieval | **Hybrid-retrieval verification + ES backfill.** P81 routing probe (intent → `contract_search` vs `portfolio_search` vs `portfolio_compare` vs `clause_search` vs `contract_cite`), P82 coverage probe (every contract-create path must index to ES). Discovered ~40% of contracts invisible to `portfolio_search` — only `/upload` + PATCH paths called `indexContract`. Fixed blank-create (`contracts.ts`: defaults `analysisStatus: 'DONE'` + calls `indexContract`), bulk-import (CSV row indexed), amendment-create. One-shot `apps/api/scripts/backfill-es-index.ts` re-indexed 1393 contracts (Vertex Cloud org went from 344 → 629). Added orchestrator rule A12 for intent-based routing of hybrid retrieval. | None |
 | 2026-05-01 | competitive | **Competitive benchmark + multi-doc compare + long-context + Smart Import.** P83 competitive query suite (Harvey/Ironclad parity bar). P84 portfolio_compare probe. New tool `apps/agents/app/tools/portfolio_compare.py` (2–10 contract IDs × 1–10 topics → structured matrix for true side-by-side, not prose synthesis) + endpoint `/internal/ai/tools/portfolio_compare`. Long-context summarization: `_CHUNK_SIZE = 120_000` (was 40K) in `review_agent.py`; `_score()` now passes significantClauses (high-signal clause content) to the score step. Smart Import recall: second-pass focused extraction for missing required keys (parties, term_length, governing_law, total_value). Permissions hygiene: added `p(A.SIGN, R.CONTRACT)` to `LEGAL_COUNSEL` / `LEGAL_OPS` / `CONTRACT_MANAGER` and switched `signatures.ts` send/remind/void from `requirePermission('configure', 'contract')` → `requirePermission('sign', 'contract')`. One-shot `apps/api/scripts/refresh-system-role-perms.ts` synced 219 system roles. Also: agent draft path — `/agent/draft` accepts `templateId` and forwards via `context.template_id`; `step_select_template` honors explicit ID; INTERNAL_SECRET via `settings.internal_service_secret` (pydantic-settings) not `os.getenv`; all internal HTTP calls send `x-internal-service: agents`; `requireAuth` honors `x-org-id` for system-scoped calls. | None |
+| 2026-06-10 | 10 | **Phase 10 checklist audit.** Verified tracker vs code: bulk CSV import, RBAC manager, onboarding wizard, admin settings panel, team workload view, inbound email parsing all shipped earlier but unchecked — marked `[x]` with file pointers. Slack outbound, SMTP email, integration settings page, perf/caching marked `[~]` partial. Flagged `docs/33-AGENT-UPDATES-PLAN.md` as missing from repo (referenced in ADL + session log but never committed). Remaining genuine gaps: Slack slash-command/inline-approvals/wizard, Teams bot, Salesforce, SAP/NetSuite, integration health dashboard, Gmail/Outlook add-ins, Integration Agent, Compliance Agent. | `docs/33-AGENT-UPDATES-PLAN.md` lost — needs reconstruction |
 | 2026-05-02 | plan | **Wrote `docs/33-AGENT-UPDATES-PLAN.md`** (233 lines) — park doc capturing where we are today (post P1–P84 + ~30 fixes), honest gap matrix vs Harvey/Ironclad, Tier 1/2/3 backlog, decisions queue, sequencing, success metrics, risk register, and explicit "deliberately doesn't promise" caveats. Remaining gaps catalogued: structured-data eval suite, scheduled report runs, citations-with-page-anchors, Q&A over signed PDFs (vs structured fields only), team-knowledge memory, redline policy enforcement, cross-encoder reranker swap, evidence-pack export. Updated this tracker (was last touched 2026-04-22; covers ~2 weeks of probe build + ~30 bug fixes + agent-quality push). | None |
 
 ---
