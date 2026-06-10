@@ -230,13 +230,14 @@ export function artifactFromToolResult(call: ToolResult): Artifact | null {
       title: typeof r.title === 'string' ? r.title : 'Draft',
       subtitle: typeof r.subtitle === 'string' ? r.subtitle : undefined,
       html,
-      actions: [
-        { id: 'save', label: 'Save as draft', variant: 'primary', tool: 'save_draft' },
-        { id: 'send', label: 'Send for review', variant: 'secondary', tool: 'send_for_review' },
-        ...(typeof r.contractId === 'string'
-          ? [{ id: 'open', label: 'Open in Contracts', variant: 'secondary' as const, href: `/contracts/${r.contractId}` }]
-          : []),
-      ],
+      // Audit 2026-06-10: dropped the `save_draft` / `send_for_review`
+      // pseudo-tool buttons — no backend handler exists (the onAction
+      // callback only logged). contract_create_from_template already
+      // persists the draft server-side, so "Open in Contracts" is the
+      // honest action. Re-add real actions when U.6.x wires them.
+      actions: typeof r.contractId === 'string'
+        ? [{ id: 'open', label: 'Open in Contracts', variant: 'primary', href: `/contracts/${r.contractId}` }]
+        : [],
     }
     return a
   }

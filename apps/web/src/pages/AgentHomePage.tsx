@@ -46,6 +46,7 @@ import {
 } from 'lucide-react'
 import { ArtifactPane, type Artifact } from '@/components/agent/ArtifactPane'
 import { artifactFromToolResult } from '@/components/agent/artifact-from-tool'
+import { ActionPreview, type PendingAction } from '@/components/agent/ActionPreview'
 import { parseActionChips } from '@/components/agent/action-chips'
 import { ChipRow } from '@/components/agent/ChipButton'
 import { MarkdownProse } from '@/components/agent/MarkdownProse'
@@ -74,7 +75,13 @@ interface ChatMessage {
     // instead of "contract_get". Populated client-side when the result
     // includes a `title`/`name` field on a single primary entity.
     entityTitle?: string
+    // A4 — slow-tool heartbeat (tool_progress event) so long-running
+    // calls show elapsed seconds instead of a frozen spinner.
+    elapsedSec?: number
   }>
+  // P5 — write-tool plan-then-execute. Proposals awaiting the user's
+  // Apply/Cancel, rendered as ActionPreview cards (mirrors SideAgentRail).
+  pendingActions?: PendingAction[]
   streaming?: boolean
   error?: string
 }
@@ -446,6 +453,61 @@ export function AgentHomePage() {
                   ? { ...m, toolCalls: [...(m.toolCalls ?? []), { name: evt.name, status: 'running' }] }
                   : m,
               ))
+            } else if (evt.type === 'tool_progress' && evt.name) {
+              // A4 heartbeat — surface elapsed seconds on the running chip
+              // so slow tools don't look frozen (parity with SideAgentRail).
+              setMessages(prev => prev.map(m =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      toolCalls: (m.toolCalls ?? []).map(tc =>
+                        tc.name === evt.name && tc.status === 'running'
+                          ? { ...tc, elapsedSec: Number(evt.elapsedSec) || undefined }
+                          : tc,
+                      ),
+                    }
+                  : m,
+              ))
+            } else if (evt.type === 'tool_call_awaiting_confirmation' && evt.name) {
+              // P5 — write-tool plan-then-execute (parity with SideAgentRail).
+              // Append a PendingAction so an ActionPreview card renders;
+              // Apply POSTs /agent/threads/:id/actions/apply.
+              const tcId = String(evt.id ?? `tc_${Date.now()}`)
+              const toolName = String(evt.name)
+              const args = (evt.args && typeof evt.args === 'object') ? evt.args as Record<string, unknown> : {}
+              const preview = (evt.preview && typeof evt.preview === 'object') ? evt.preview as Record<string, unknown> : null
+              const summary = String(preview?.summary ?? `Apply ${toolName}`)
+              const target = preview?.target ? String(preview.target)
+                : preview?.title      ? String(preview.title)
+                : preview?.contractId ? `Contract ${String(preview.contractId).slice(0, 12)}…`
+                : undefined
+              const diff = Array.isArray(preview?.diff)
+                ? preview.diff as Array<{ field: string; before: string | number | null; after: string | number | null }>
+                : undefined
+              const action: PendingAction = {
+                id: tcId,
+                toolName,
+                status: 'awaiting_confirmation',
+                summary,
+                args,
+                target,
+                diff,
+                reversible: Boolean(evt.reversible),
+              }
+              // The proposal also closes out the running chip for this tool.
+              setMessages(prev => prev.map(m =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      toolCalls: (m.toolCalls ?? []).map(tc =>
+                        tc.name === toolName && tc.status === 'running' ? { ...tc, status: 'ok' as const } : tc,
+                      ),
+                      pendingActions: [...(m.pendingActions ?? []), action],
+                    }
+                  : m,
+              ))
+              const local = [...localToolCalls].reverse().find(t => t.name === toolName && t.status === 'running')
+              if (local) { local.status = 'ok'; local.result = 'awaiting_user_confirmation' }
             } else if (evt.type === 'tool_call_result' && evt.name) {
               const tc = [...localToolCalls].reverse().find(t => t.name === evt.name && t.status === 'running')
               if (tc) {
@@ -601,6 +663,80 @@ export function AgentHomePage() {
     } finally {
       setStreaming(false)
       abortRef.current = null
+    }
+  }
+
+  // ── P5 — write-tool Apply / Cancel / Undo (parity with SideAgentRail) ──
+  // Apply POSTs /agent/threads/:id/actions/apply; the server enforces
+  // orgId/authorId from the JWT, records a ToolCall row, and fires the
+  // AGENT_TOOL_APPLIED audit event. Undo targets the returned toolCallId
+  // within the 15-min server-side window.
+  const patchAction = (msgId: string, actionId: string, patch: Partial<PendingAction>) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m
+      return {
+        ...m,
+        pendingActions: (m.pendingActions ?? []).map(a => a.id === actionId ? { ...a, ...patch } : a),
+      }
+    }))
+  }
+
+  async function applyAction(msgId: string, actionId: string, editedArgs: Record<string, unknown>) {
+    const msg = messages.find(m => m.id === msgId)
+    const action = msg?.pendingActions?.find(a => a.id === actionId)
+    if (!action) return
+    patchAction(msgId, actionId, { status: 'running', args: editedArgs })
+    if (!threadId) {
+      // No persisted thread → the apply RPC can't record a ToolCall row.
+      patchAction(msgId, actionId, { status: 'error', errorMessage: 'Thread not persisted yet — try again in a moment.' })
+      return
+    }
+    try {
+      const r = await fetch(`/api/v1/agent/threads/${threadId}/actions/apply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+        body: JSON.stringify({ toolName: action.toolName, args: editedArgs, messageId: msgId, actionId }),
+      })
+      const body = await r.json().catch(() => ({ ok: false, error: { detail: 'Non-JSON response' } }))
+      if (r.ok && body.ok) {
+        patchAction(msgId, actionId, {
+          status: 'applied',
+          resultPreview: JSON.stringify(body.result).slice(0, 400),
+          toolCallId: body.toolCallId,
+          appliedAt: Date.now(),
+        })
+      } else {
+        const errDetail = typeof body?.error === 'object'
+          ? (body.error?.detail ?? JSON.stringify(body.error).slice(0, 200))
+          : (body?.error ?? body?.detail ?? `HTTP ${r.status}`)
+        patchAction(msgId, actionId, { status: 'error', errorMessage: String(errDetail) })
+      }
+    } catch (e) {
+      patchAction(msgId, actionId, { status: 'error', errorMessage: (e as Error).message })
+    }
+  }
+
+  function cancelAction(msgId: string, actionId: string) {
+    patchAction(msgId, actionId, { status: 'cancelled' })
+  }
+
+  async function undoAction(msgId: string, actionId: string) {
+    const msg = messages.find(m => m.id === msgId)
+    const action = msg?.pendingActions?.find(a => a.id === actionId)
+    if (!action?.toolCallId || !threadId) return
+    try {
+      const r = await fetch(`/api/v1/agent/threads/${threadId}/actions/${action.toolCallId}/undo`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken ?? ''}` },
+      })
+      const body = await r.json().catch(() => ({ ok: false }))
+      if (r.ok && body.ok) patchAction(msgId, actionId, { status: 'undone' })
+      else patchAction(msgId, actionId, { status: 'error', errorMessage: String(body?.detail ?? body?.error ?? `Undo failed (${r.status})`) })
+    } catch (e) {
+      patchAction(msgId, actionId, { status: 'error', errorMessage: (e as Error).message })
     }
   }
 
@@ -799,6 +935,9 @@ export function AgentHomePage() {
                     // turn via the same path as composer-submit.
                     if (!streaming) send(text)
                   }}
+                  onActionApply={(actionId, args) => applyAction(m.id, actionId, args)}
+                  onActionCancel={(actionId) => cancelAction(m.id, actionId)}
+                  onActionUndo={(actionId) => undoAction(m.id, actionId)}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -970,10 +1109,16 @@ function MessageBubble({
   message,
   onChipSelect,
   streaming,
+  onActionApply,
+  onActionCancel,
+  onActionUndo,
 }: {
   message:      ChatMessage
   onChipSelect?: (text: string) => void
   streaming?:   boolean
+  onActionApply?:  (actionId: string, args: Record<string, unknown>) => void | Promise<void>
+  onActionCancel?: (actionId: string) => void
+  onActionUndo?:   (actionId: string) => void | Promise<void>
 }) {
   if (message.role === 'user') {
     return (
@@ -1018,6 +1163,9 @@ function MessageBubble({
                   </>
                 )}
                 {tc.status === 'running' && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+                {tc.status === 'running' && tc.elapsedSec != null && (
+                  <span className="opacity-70">{tc.elapsedSec.toFixed(0)}s</span>
+                )}
               </span>
             ))}
           </div>
@@ -1034,6 +1182,22 @@ function MessageBubble({
             </span>
           )}
         </div>
+        {/* P5 — write-tool proposals. ActionPreview cards with Apply /
+            Edit / Cancel (+ Undo on applied reversible actions), parity
+            with SideAgentRail. */}
+        {(message.pendingActions?.length ?? 0) > 0 && (
+          <div className="mt-2 space-y-2" data-testid="agent-pending-actions">
+            {message.pendingActions!.map(a => (
+              <ActionPreview
+                key={a.id}
+                action={a}
+                onApply={(args) => onActionApply?.(a.id, args)}
+                onCancel={() => onActionCancel?.(a.id)}
+                onUndo={onActionUndo ? () => onActionUndo(a.id) : undefined}
+              />
+            ))}
+          </div>
+        )}
         {/* P1 fix — render parsed chips below assistant prose.
             U10 — show skeleton placeholders while streaming so the row
             reserves space and the user knows chips are coming. */}
