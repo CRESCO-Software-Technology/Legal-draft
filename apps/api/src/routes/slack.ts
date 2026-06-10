@@ -162,14 +162,21 @@ export async function slackRoutes(app: FastifyInstance) {
 
     try { await notificationQueue.remove(`escalate-${ref.stepId}`) } catch { /* no-op */ }
 
-    await prisma.approvalStep.update({
-      where: { id: ref.stepId },
+    // Compare-and-set on status — a double-click (or a concurrent decide
+    // from the web UI) must not overwrite an already-recorded decision.
+    // The findFirst above gives the friendly error message; this guard
+    // closes the race window between the check and the write.
+    const decided = await prisma.approvalStep.updateMany({
+      where: { id: ref.stepId, approverId: user.id, status: 'PENDING' },
       data: {
         status: decision, decision,
         comment: decision === 'REJECTED' ? `Rejected via Slack by ${user.email}` : null,
         decidedAt: new Date(),
       },
     })
+    if (decided.count === 0) {
+      return reply.send(ephemeral('⚠️ This step was already decided (possibly a double-click).'))
+    }
     createAuditEvent({
       orgId: auth.orgId, userId: user.id,
       action: AuditAction.APPROVAL_DECIDED,

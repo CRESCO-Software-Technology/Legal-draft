@@ -682,10 +682,24 @@ export function AgentHomePage() {
   }
 
   async function applyAction(msgId: string, actionId: string, editedArgs: Record<string, unknown>) {
-    const msg = messages.find(m => m.id === msgId)
-    const action = msg?.pendingActions?.find(a => a.id === actionId)
-    if (!action) return
-    patchAction(msgId, actionId, { status: 'running', args: editedArgs })
+    // Read the toolName inside the functional update (parity with the
+    // rail) — `messages` from the render closure can be stale if state
+    // moved between render and click.
+    let toolName = ''
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m
+      return {
+        ...m,
+        pendingActions: (m.pendingActions ?? []).map(a => {
+          if (a.id !== actionId) return a
+          toolName = a.toolName
+          return { ...a, status: 'running' as const, args: editedArgs }
+        }),
+      }
+    }))
+    // Visual yield so the "running" state renders before the await.
+    await new Promise(ok => setTimeout(ok, 0))
+    if (!toolName) return
     if (!threadId) {
       // No persisted thread → the apply RPC can't record a ToolCall row.
       patchAction(msgId, actionId, { status: 'error', errorMessage: 'Thread not persisted yet — try again in a moment.' })
@@ -698,7 +712,7 @@ export function AgentHomePage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken ?? ''}`,
         },
-        body: JSON.stringify({ toolName: action.toolName, args: editedArgs, messageId: msgId, actionId }),
+        body: JSON.stringify({ toolName, args: editedArgs, messageId: msgId, actionId }),
       })
       const body = await r.json().catch(() => ({ ok: false, error: { detail: 'Non-JSON response' } }))
       if (r.ok && body.ok) {
