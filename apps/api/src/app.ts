@@ -189,6 +189,15 @@ export async function buildApp() {
     basePath: '/admin/queues',
   })
 
+  // Error handler MUST be set BEFORE route plugins are registered —
+  // Fastify snapshots the active error handler into each encapsulated
+  // plugin context at registration time. Previously this was set after
+  // the routes (bottom of buildApp), so every route used Fastify's
+  // DEFAULT handler: ZodError surfaced as a raw 500 with the issues
+  // JSON in `message` instead of the structured 422. (Found in the
+  // 2026-06-10 full-app review via POST /search with a bad body.)
+  app.setErrorHandler(errorHandler)
+
   // Routes
   await app.register(healthRoutes)
   await app.register(authRoutes,         { prefix: '/api/v1/auth' })
@@ -248,8 +257,6 @@ export async function buildApp() {
   ensureBucket().catch(err =>
     app.log.warn({ err }, 'MinIO not available — file uploads will fail until storage is running'),
   )
-
-  app.setErrorHandler(errorHandler)
 
   return app
 }

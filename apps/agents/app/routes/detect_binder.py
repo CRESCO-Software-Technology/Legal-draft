@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..config import active_model, active_provider, settings
+from ..jsonish import loads_lenient
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ async def detect_binder(req: DetectBinderRequest) -> DetectBinderResponse:
 
     try:
         raw = await _call_llm(provider, model, text_sample)
-        parsed = json.loads(raw)
+        parsed = loads_lenient(raw)
         documents = [DetectedDocument(**d) for d in (parsed.get("documents") or [])]
         result = DetectBinderResponse(
             isBinder=bool(parsed.get("isBinder", False)),
@@ -121,10 +122,15 @@ async def _call_llm(provider: str, model: str, text: str) -> str:
         return resp.choices[0].message.content or "{}"
 
     elif provider == "google":
-        import google.generativeai as genai
-        genai.configure(api_key=settings.google_api_key)
-        gmodel = genai.GenerativeModel(model)
-        response = await gmodel.generate_content_async(prompt)
-        return response.text
+        # langchain_google_genai is the Gemini client the orchestrator
+        # already depends on — the legacy google.generativeai SDK was
+        # never in the venv, so this branch crashed with ImportError
+        # whenever resolve_provider fell back to google (found in the
+        # 2026-06-10 full-app review: intake/classify/detect-binder all
+        # silently returned their fallback payloads).
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        llm = ChatGoogleGenerativeAI(model=model, google_api_key=settings.google_api_key)
+        resp = await llm.ainvoke(prompt)
+        return resp.content if isinstance(resp.content, str) else str(resp.content)
 
     raise ValueError(f"Unknown provider: {provider}")

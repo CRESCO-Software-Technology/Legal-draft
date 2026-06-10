@@ -14,6 +14,7 @@ Changes from v2:
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 import logging
 from typing import Any
 
@@ -260,7 +261,7 @@ def _parse_json(content: str) -> dict:
     if content.startswith("```"):
         lines = content.split("\n")
         content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(content)
+    return loads_lenient(content)
 
 
 def _clamp_risk(val: Any) -> float | None:
@@ -589,24 +590,36 @@ async def _extract(state: ReviewState) -> ReviewState:
                 HumanMessage(content=chunk),
             ])
             data = _parse_json(resp.content)
+            # LLM-variance hardening (2026-06-10 review): models sometimes
+            # wrap the object in a one-element array, or emit a LIST for a
+            # dict-shaped key — a truthy list defeats `or {}` and `.items()`
+            # crashes the whole chunk. Coerce instead of crashing.
+            if isinstance(data, list):
+                data = next((d for d in data if isinstance(d, dict)), {})
+            if not isinstance(data, dict):
+                raise ValueError(f"extract returned non-object JSON: {type(data).__name__}")
+            _dict = lambda v: v if isinstance(v, dict) else {}   # noqa: E731
+            _list = lambda v: v if isinstance(v, list) else []   # noqa: E731
 
-            all_segments  = all_segments + data.get("clauseSegments", [])
-            merged_fields = _merge_raw_fields(merged_fields, data.get("rawFields", {}))
-            merged_flags  = _merge_clause_flags(merged_flags, data.get("clauseFlags", {}))
+            all_segments  = all_segments + _list(data.get("clauseSegments"))
+            merged_fields = _merge_raw_fields(merged_fields, _dict(data.get("rawFields")))
+            merged_flags  = _merge_clause_flags(merged_flags, _dict(data.get("clauseFlags")))
 
             # Merge contract-type-specific fields (prefer first non-null)
-            for k, v in (data.get("typeFields") or {}).items():
+            for k, v in _dict(data.get("typeFields")).items():
                 if k not in merged_type or (isinstance(merged_type[k], dict) and merged_type[k].get("value") is None):
                     merged_type[k] = v
 
             # Merge org custom fields (prefer first non-null)
-            for k, v in (data.get("customFields") or {}).items():
+            for k, v in _dict(data.get("customFields")).items():
                 if k not in merged_custom or (isinstance(merged_custom[k], dict) and merged_custom[k].get("value") is None):
                     merged_custom[k] = v
 
             # Accumulate open-ended findings (deduplicate by key)
-            seen_keys = {f.get("key") for f in open_ended}
-            for finding in (data.get("openEndedFindings") or []):
+            seen_keys = {f.get("key") for f in open_ended if isinstance(f, dict)}
+            for finding in _list(data.get("openEndedFindings")):
+                if not isinstance(finding, dict):
+                    continue
                 if finding.get("key") not in seen_keys:
                     open_ended.append(finding)
                     seen_keys.add(finding.get("key"))

@@ -10,6 +10,7 @@ Output stored in contract.metadata._redlineAnalysis.
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 import logging
 import re
 from typing import Any
@@ -103,7 +104,7 @@ def _parse_json(text: str) -> Any:
     text = re.sub(r'^```(?:json)?\s*', '', text)
     text = re.sub(r'\s*```$', '', text)
     try:
-        return json.loads(text)
+        return loads_lenient(text)
     except json.JSONDecodeError:
         # Try extracting from first [ or {
         for start_char, end_char in [('[', ']'), ('{', '}')]:
