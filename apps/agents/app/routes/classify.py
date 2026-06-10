@@ -125,8 +125,23 @@ async def _call_llm(provider: str, model: str, text: str) -> str:
         # 2026-06-10 full-app review: intake/classify/detect-binder all
         # silently returned their fallback payloads).
         from langchain_google_genai import ChatGoogleGenerativeAI
-        llm = ChatGoogleGenerativeAI(model=model, google_api_key=settings.google_api_key)
+        llm = ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=settings.google_api_key,
+            max_output_tokens=4096,  # bounded, but generous: Gemini 2.5 counts
+            # internal "thinking" tokens against this limit — a tight cap
+            # (256-1024, parity with the other branches) starves the
+            # actual answer and truncates the JSON mid-object.
+        )
         resp = await llm.ainvoke(prompt)
-        return resp.content if isinstance(resp.content, str) else str(resp.content)
+        content = resp.content
+        if isinstance(content, list):
+            # LangChain can return content as a list of blocks — extract
+            # text parts instead of str()-ing the Python repr.
+            content = "".join(
+                p.get("text", "") if isinstance(p, dict) else str(p)
+                for p in content
+            )
+        return content
 
     raise ValueError(f"Unknown provider: {provider}")
