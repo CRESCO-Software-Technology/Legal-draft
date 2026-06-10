@@ -107,7 +107,27 @@ export interface ContractDoc {
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function indexContract(id: string, doc: ContractDoc) {
-  await es.index({ index: CONTRACT_INDEX, id, body: doc })
+  // The index's dynamic template maps keyTerms.* / metadata.* to keyword —
+  // nested objects (e.g. an SLA's serviceCreditTiers: {"<99.9%": "10%"})
+  // blow up with document_parsing_exception and the contract silently
+  // never lands in ES (found in the 2026-06-10 screen review: Umbrella
+  // SLA missing from search). Flatten non-scalar values to JSON strings
+  // so they stay text-searchable without fighting the mapping.
+  const scalarize = (obj?: Record<string, unknown>) => {
+    if (!obj) return obj
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = (v === null || ['string', 'number', 'boolean'].includes(typeof v))
+        ? v
+        : JSON.stringify(v)
+    }
+    return out
+  }
+  await es.index({
+    index: CONTRACT_INDEX,
+    id,
+    body: { ...doc, keyTerms: scalarize(doc.keyTerms), metadata: scalarize(doc.metadata) },
+  })
 }
 
 export async function deleteContractFromIndex(id: string) {
