@@ -121,6 +121,80 @@ export function artifactFromToolResult(call: ToolResult): Artifact | null {
     return a
   }
 
+  if (call.name === 'portfolio_compare') {
+    // 2026-05-01 ADL — topic × contract matrix. Rows = topics, one
+    // column per compared contract; cells show §ref or ✗ so the user
+    // sees true side-by-side coverage, not prose synthesis.
+    const contracts = (r.contracts ?? []) as Array<Record<string, unknown>>
+    const matrix = (r.matrix ?? []) as Array<Record<string, unknown>>
+    if (!Array.isArray(contracts) || contracts.length < 2 || !Array.isArray(matrix) || matrix.length === 0) return null
+    const colKey = (i: number) => `c${i}`
+    const shortTitle = (t: unknown) => {
+      const s = String(t ?? 'Contract')
+      return s.length > 28 ? s.slice(0, 27) + '…' : s
+    }
+    const rows = matrix.map(m => {
+      const row: Record<string, unknown> = { topic: m.topic, foundCount: `${m.foundCount}/${contracts.length}` }
+      const per = (m.perContract ?? []) as Array<Record<string, unknown>>
+      contracts.forEach((c, i) => {
+        const cell = per.find(p => p.contractId === c.id)
+        row[colKey(i)] = cell?.found
+          ? (cell.sectionRef ? `✓ §${cell.sectionRef}` : '✓')
+          : '—'
+      })
+      return row
+    })
+    const a: TableArtifact = {
+      kind: 'table',
+      id: nextId('art'),
+      // Ordered contract-id list + topics is the fingerprint (per the
+      // ADL note: the factory owns the fingerprint definition).
+      dedupeKey: stableKey(call.name, `${contracts.map(c => c.id).join(',')}|${matrix.map(m => m.topic).join(',')}`),
+      title: 'Contract comparison',
+      subtitle: `${contracts.length} contracts × ${matrix.length} topics`,
+      columns: [
+        { key: 'topic',      label: 'Topic',  align: 'left' },
+        ...contracts.map((c, i) => ({ key: colKey(i), label: shortTitle(c.title), align: 'left' as const })),
+        { key: 'foundCount', label: 'Found',  align: 'right' },
+      ],
+      rows,
+    }
+    return a
+  }
+
+  if (call.name === 'playbook_check') {
+    // Audit 2026-06-10 — playbook results are check-shaped (clause ×
+    // position × violations); a table beats prose for scanning gaps.
+    const checks = (r.checks ?? []) as Array<Record<string, unknown>>
+    if (!Array.isArray(checks) || checks.length === 0) return null
+    const rows = checks.map(c => ({
+      clauseType:    c.clauseType,
+      sectionRef:    c.sectionRef ? `§${c.sectionRef}` : '',
+      riskRating:    c.riskRating ?? '',
+      worstSeverity: c.worstSeverity ?? '—',
+      violations:    `${Number(c.failed ?? 0)} failed / ${Number(c.passed ?? 0)} passed`,
+      category:      (c.category as { name?: string } | undefined)?.name ?? '',
+    }))
+    const failedTotal = checks.reduce((s, c) => s + Number(c.failed ?? 0), 0)
+    const unmapped = Array.isArray(r.unmapped) ? r.unmapped.length : 0
+    const a: TableArtifact = {
+      kind: 'table',
+      id: nextId('art'),
+      dedupeKey: stableKey(call.name, `count=${checks.length}:fails=${failedTotal}`),
+      title: 'Playbook check',
+      subtitle: `${checks.length} clauses checked · ${failedTotal} rule failure${failedTotal === 1 ? '' : 's'}${unmapped > 0 ? ` · ${unmapped} unmapped clause type${unmapped === 1 ? '' : 's'}` : ''}`,
+      columns: [
+        { key: 'clauseType',    label: 'Clause',     align: 'left' },
+        { key: 'sectionRef',    label: '§',          align: 'left' },
+        { key: 'category',      label: 'Playbook',   align: 'left' },
+        { key: 'violations',    label: 'Rules',      align: 'left' },
+        { key: 'worstSeverity', label: 'Severity',   align: 'left' },
+      ],
+      rows,
+    }
+    return a
+  }
+
   if (call.name === 'renewal_advice') {
     // Either a single-contract recommendation (Card) or a portfolio list (Table).
     if (r.contracts && Array.isArray(r.contracts)) {
@@ -230,13 +304,14 @@ export function artifactFromToolResult(call: ToolResult): Artifact | null {
       title: typeof r.title === 'string' ? r.title : 'Draft',
       subtitle: typeof r.subtitle === 'string' ? r.subtitle : undefined,
       html,
-      actions: [
-        { id: 'save', label: 'Save as draft', variant: 'primary', tool: 'save_draft' },
-        { id: 'send', label: 'Send for review', variant: 'secondary', tool: 'send_for_review' },
-        ...(typeof r.contractId === 'string'
-          ? [{ id: 'open', label: 'Open in Contracts', variant: 'secondary' as const, href: `/contracts/${r.contractId}` }]
-          : []),
-      ],
+      // Audit 2026-06-10: dropped the `save_draft` / `send_for_review`
+      // pseudo-tool buttons — no backend handler exists (the onAction
+      // callback only logged). contract_create_from_template already
+      // persists the draft server-side, so "Open in Contracts" is the
+      // honest action. Re-add real actions when U.6.x wires them.
+      actions: typeof r.contractId === 'string'
+        ? [{ id: 'open', label: 'Open in Contracts', variant: 'primary', href: `/contracts/${r.contractId}` }]
+        : [],
     }
     return a
   }

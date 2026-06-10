@@ -130,6 +130,31 @@ export function formatForSlack(event: string, data: Record<string, unknown>): Sl
         ],
       }
     }
+    case 'approval.submitted': {
+      // Phase 10 — actionable approval card. The Approve/Reject buttons
+      // post back to /api/v1/slack/interactions (configure Interactivity
+      // on the Slack app); the URL button always works as a fallback.
+      const title = typeof data.title === 'string' ? data.title : String(data.contractId ?? 'Contract')
+      const value = data.value != null ? ` · ${fmtMoney(data.value, data.currency)}` : ''
+      const ref = JSON.stringify({ instanceId: data.instanceId, stepId: data.stepId })
+      return {
+        text: `📝 Approval requested: ${title}`,
+        blocks: [
+          { type: 'header', text: { type: 'plain_text', text: '📝 Approval requested' } },
+          { type: 'section', text: { type: 'mrkdwn',
+            text: `*<${link}|${title}>*\n${data.type ?? 'Contract'}${value} · step: ${data.stepName ?? 'Approval'}`,
+          } },
+          { type: 'actions', elements: [
+            { type: 'button', style: 'primary', action_id: 'approval_approve',
+              text: { type: 'plain_text', text: '✅ Approve' }, value: ref },
+            { type: 'button', style: 'danger', action_id: 'approval_reject',
+              text: { type: 'plain_text', text: '❌ Reject' }, value: ref },
+            { type: 'button', action_id: 'approval_open',
+              text: { type: 'plain_text', text: 'Open in draftLegal' }, url: `${link}?tab=approval` },
+          ] },
+        ],
+      }
+    }
     case 'approval.decided': {
       const decision = String(data.decision ?? '').toUpperCase()
       const emoji = decision === 'APPROVED' ? '✅' : decision === 'REJECTED' ? '❌' : '🔄'

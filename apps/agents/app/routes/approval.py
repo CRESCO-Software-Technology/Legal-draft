@@ -18,10 +18,23 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _API = settings.api_url
-_HEADERS = {
-    "Content-Type": "application/json",
-    "x-internal-secret": settings.internal_service_secret,
-}
+
+
+def _internal_headers(org_id: str) -> dict[str, str]:
+    """System-scoped headers for the Node API's requireAuth bypass.
+
+    The bypass needs BOTH x-internal-service: agents AND the shared
+    secret, plus x-org-id for tenant scoping (auth.ts). Sending only
+    the secret falls through to the Bearer check → 401, which silently
+    killed every approval summary (logs showed
+    "[approval-summary] failed to fetch contract …: 401").
+    """
+    return {
+        "Content-Type": "application/json",
+        "x-internal-secret": settings.internal_service_secret,
+        "x-internal-service": "agents",
+        "x-org-id": org_id,
+    }
 
 
 class ApprovalSummaryRequest(BaseModel):
@@ -40,17 +53,18 @@ async def _process_approval_summary(
     approver_ids: list[str],
 ) -> None:
     logger.info("[approval-summary] START instanceId=%s contractId=%s", instance_id, contract_id)
+    headers = _internal_headers(org_id)
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         # 1. Fetch contract metadata
-        r = await client.get(f"{_API}/api/v1/contracts/{contract_id}", headers=_HEADERS)
+        r = await client.get(f"{_API}/api/v1/contracts/{contract_id}", headers=headers)
         if r.status_code != 200:
             logger.error("[approval-summary] failed to fetch contract %s: %s", contract_id, r.status_code)
             return
         contract = r.json()
 
         # 2. Fetch contract version (plain text)
-        versions_r = await client.get(f"{_API}/api/v1/contracts/{contract_id}/versions", headers=_HEADERS)
+        versions_r = await client.get(f"{_API}/api/v1/contracts/{contract_id}/versions", headers=headers)
         plain_text = ""
         if versions_r.status_code == 200:
             versions = versions_r.json().get("data", [])
@@ -59,7 +73,7 @@ async def _process_approval_summary(
                 plain_text = version.get("plainText", "")
 
         # 3. Fetch clauses
-        clauses_r = await client.get(f"{_API}/api/v1/contracts/{contract_id}/clauses", headers=_HEADERS)
+        clauses_r = await client.get(f"{_API}/api/v1/contracts/{contract_id}/clauses", headers=headers)
         clauses = []
         if clauses_r.status_code == 200:
             clauses_data = clauses_r.json()
@@ -86,7 +100,7 @@ async def _process_approval_summary(
         # 5. PATCH the result back to the ApprovalInstance
         patch_r = await client.patch(
             f"{_API}/api/v1/approvals/{instance_id}/summary",
-            headers=_HEADERS,
+            headers=headers,
             json={
                 "aiSummary":             result.get("executiveSummary", ""),
                 "keyRisks":              result.get("keyRisks", []),

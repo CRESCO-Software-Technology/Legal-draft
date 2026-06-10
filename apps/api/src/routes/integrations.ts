@@ -14,6 +14,15 @@
  *     POST   /admin/integrations/webhooks/:id/test    — fire a synthetic event
  *     GET    /admin/integrations/webhooks/:id/deliveries — recent delivery log
  *
+ *   Slack (Phase 10 — Slack bot setup):
+ *     GET    /admin/integrations/slack                 — current config (secrets masked)
+ *     PUT    /admin/integrations/slack                 — save teamId / signingSecret / botToken
+ *     DELETE /admin/integrations/slack                 — disconnect
+ *
+ *   Health (Phase 10 — integration health dashboard):
+ *     GET    /admin/integrations/health               — per-webhook health + delivery aggregates
+ *     POST   /admin/integrations/webhooks/:id/deliveries/:deliveryId/retry — requeue a failed delivery
+ *
  *   Public:
  *     GET    /admin/integrations/events               — list of webhook event types
  */
@@ -24,6 +33,7 @@ import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { hashApiKey, API_KEY_PREFIX } from '../middleware/auth.js'
 import { queueWebhookDelivery } from '../lib/queue.js'
+import { isTeamsUrl } from '../lib/teams-formatter.js'
 
 // Canonical list of events a webhook can subscribe to. Keep stable —
 // these are part of the public API contract.
@@ -57,7 +67,7 @@ const CreateWebhookSchema = z.object({
   url:     z.string().url().max(2000),
   events:  z.array(z.string()).min(1),
   enabled: z.boolean().optional(),
-  type:    z.enum(['generic', 'slack']).optional(),
+  type:    z.enum(['generic', 'slack', 'teams']).optional(),
 })
 
 const PatchWebhookSchema = z.object({
@@ -157,11 +167,13 @@ export async function integrationsRoutes(app: FastifyInstance) {
     }
     const { orgId, sub: userId } = req.user
 
-    // Auto-detect Slack URLs if user didn't specify a type. Saves a
-    // step for the common case where they paste a hooks.slack.com URL.
+    // Auto-detect Slack / Teams URLs if user didn't specify a type. Saves
+    // a step for the common case where they paste a known webhook URL.
     let webhookType = body.type ?? 'generic'
     if (!body.type && body.url.startsWith('https://hooks.slack.com/')) {
       webhookType = 'slack'
+    } else if (!body.type && isTeamsUrl(body.url)) {
+      webhookType = 'teams'
     }
 
     const created = await prisma.webhook.create({
@@ -244,6 +256,199 @@ export async function integrationsRoutes(app: FastifyInstance) {
       },
     })
     return reply.send({ ok: true, message: 'Test delivery queued' })
+  })
+
+  // ── Slack config (Phase 10 — Slack bot setup wizard) ─────────────────
+  // Stored on organization.settings.slack. The signing secret authenticates
+  // inbound /slack/commands + /slack/interactions; the optional bot token
+  // lets button clicks resolve to CLM users (users:read.email scope).
+  app.get('/slack', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } })
+    const slack = ((org?.settings as Record<string, unknown> | null)?.slack ?? null) as
+      { teamId?: string; signingSecret?: string; botToken?: string; configuredAt?: string } | null
+    if (!slack?.teamId) return reply.send({ connected: false })
+    return reply.send({
+      connected:        true,
+      teamId:           slack.teamId,
+      configuredAt:     slack.configuredAt ?? null,
+      hasSigningSecret: Boolean(slack.signingSecret),
+      hasBotToken:      Boolean(slack.botToken),
+    })
+  })
+
+  app.put('/slack', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    let body
+    try {
+      body = z.object({
+        teamId:        z.string().min(1).max(50),
+        signingSecret: z.string().min(1).max(200),
+        botToken:      z.string().max(300).optional(),
+      }).parse(req.body)
+    } catch (err) {
+      return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
+    }
+    if (body.botToken && !body.botToken.startsWith('xoxb-')) {
+      return reply.status(400).send({ detail: 'Bot token must start with xoxb-' })
+    }
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } })
+    const settings = (org?.settings ?? {}) as Record<string, unknown>
+    await prisma.organization.update({
+      where: { id: orgId },
+      data: {
+        settings: {
+          ...settings,
+          slack: {
+            teamId:        body.teamId.trim(),
+            signingSecret: body.signingSecret.trim(),
+            ...(body.botToken ? { botToken: body.botToken.trim() } : {}),
+            configuredAt:  new Date().toISOString(),
+          },
+        } as never,
+      },
+    })
+    return reply.send({ ok: true })
+  })
+
+  app.delete('/slack', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } })
+    const settings = { ...((org?.settings ?? {}) as Record<string, unknown>) }
+    delete settings.slack
+    await prisma.organization.update({ where: { id: orgId }, data: { settings: settings as never } })
+    return reply.status(204).send()
+  })
+
+  // ── GET /health — integration health dashboard (Phase 10) ────────────
+  // Per-webhook health state + 24h/7d delivery aggregates + API key
+  // summary, in one call so the dashboard renders from a single query.
+  app.get('/health', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { orgId } = req.user
+    const now = Date.now()
+    const since24h = new Date(now - 24 * 60 * 60 * 1000)
+    const since7d  = new Date(now - 7 * 24 * 60 * 60 * 1000)
+
+    const webhooks = await prisma.webhook.findMany({
+      where: { orgId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true, name: true, url: true, type: true, enabled: true,
+        events: true, lastDeliveryAt: true, lastDeliveryStatus: true,
+        failureCount: true, createdAt: true,
+      },
+    })
+    const ids = webhooks.map(w => w.id)
+
+    // 7d delivery counts grouped by webhook × outcome; 24h is a subset
+    // filter on the same axis. Two groupBys beat N×4 count queries.
+    const [counts7d, counts24h, lastFailures] = await Promise.all([
+      prisma.webhookDelivery.groupBy({
+        by: ['webhookId', 'succeeded'],
+        where: { webhookId: { in: ids }, createdAt: { gte: since7d } },
+        _count: { _all: true },
+      }),
+      prisma.webhookDelivery.groupBy({
+        by: ['webhookId', 'succeeded'],
+        where: { webhookId: { in: ids }, createdAt: { gte: since24h } },
+        _count: { _all: true },
+      }),
+      // Most recent failed delivery per webhook — powers the "last error"
+      // column + the retry button. DISTINCT ON keeps it one round-trip.
+      ids.length > 0
+        ? prisma.webhookDelivery.findMany({
+            where: { webhookId: { in: ids }, succeeded: false },
+            orderBy: [{ webhookId: 'asc' }, { createdAt: 'desc' }],
+            distinct: ['webhookId'],
+            select: { id: true, webhookId: true, event: true, errorMessage: true, responseStatus: true, createdAt: true },
+          })
+        : Promise.resolve([]),
+    ])
+
+    const tally = (rows: typeof counts7d, webhookId: string, succeeded: boolean) =>
+      rows.find(r => r.webhookId === webhookId && r.succeeded === succeeded)?._count._all ?? 0
+
+    const webhookHealth = webhooks.map(w => {
+      const ok7d = tally(counts7d, w.id, true), fail7d = tally(counts7d, w.id, false)
+      const ok24h = tally(counts24h, w.id, true), fail24h = tally(counts24h, w.id, false)
+      const lastFailure = lastFailures.find(f => f.webhookId === w.id) ?? null
+      // Health state: failing = 3+ consecutive failures (worker resets
+      // failureCount to 0 on any success); degraded = recent failures but
+      // not a dead endpoint; healthy = no failures in the 7d window.
+      const health =
+        !w.enabled            ? 'disabled' :
+        w.failureCount >= 3   ? 'failing'  :
+        (w.failureCount > 0 || fail7d > 0) ? 'degraded' :
+        'healthy'
+      return {
+        id: w.id, name: w.name, url: w.url, type: w.type, enabled: w.enabled,
+        events: w.events,
+        health,
+        lastDeliveryAt: w.lastDeliveryAt, lastDeliveryStatus: w.lastDeliveryStatus,
+        consecutiveFailures: w.failureCount,
+        deliveries: { ok24h, fail24h, ok7d, fail7d },
+        lastFailure: lastFailure
+          ? { deliveryId: lastFailure.id, event: lastFailure.event, errorMessage: lastFailure.errorMessage, responseStatus: lastFailure.responseStatus, at: lastFailure.createdAt }
+          : null,
+      }
+    })
+
+    const apiKeys = await prisma.apiKey.findMany({
+      where: { orgId, revokedAt: null },
+      select: { expiresAt: true, lastUsedAt: true },
+    })
+    const in30d = new Date(now + 30 * 24 * 60 * 60 * 1000)
+    const total7dOk   = counts7d.filter(r => r.succeeded).reduce((s, r) => s + r._count._all, 0)
+    const total7dFail = counts7d.filter(r => !r.succeeded).reduce((s, r) => s + r._count._all, 0)
+
+    return reply.send({
+      webhooks: webhookHealth,
+      summary: {
+        healthy:  webhookHealth.filter(w => w.health === 'healthy').length,
+        degraded: webhookHealth.filter(w => w.health === 'degraded').length,
+        failing:  webhookHealth.filter(w => w.health === 'failing').length,
+        disabled: webhookHealth.filter(w => w.health === 'disabled').length,
+        deliveries24h: counts24h.reduce((s, r) => s + r._count._all, 0),
+        failed24h:     counts24h.filter(r => !r.succeeded).reduce((s, r) => s + r._count._all, 0),
+        successRate7d: total7dOk + total7dFail > 0
+          ? Math.round((total7dOk / (total7dOk + total7dFail)) * 100)
+          : null,
+      },
+      apiKeys: {
+        active:       apiKeys.length,
+        expiringSoon: apiKeys.filter(k => k.expiresAt && k.expiresAt <= in30d && k.expiresAt > new Date(now)).length,
+        lastUsedAt:   apiKeys.reduce<Date | null>((max, k) =>
+          k.lastUsedAt && (!max || k.lastUsedAt > max) ? k.lastUsedAt : max, null),
+      },
+    })
+  })
+
+  // ── POST /webhooks/:id/deliveries/:deliveryId/retry (Phase 10) ───────
+  // Requeue a failed delivery with its original event + payload.
+  app.post('/webhooks/:id/deliveries/:deliveryId/retry', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
+    const { id, deliveryId } = req.params as { id: string; deliveryId: string }
+    const { orgId } = req.user
+    const wh = await prisma.webhook.findFirst({
+      where: { id, orgId, deletedAt: null },
+      select: { id: true, enabled: true },
+    })
+    if (!wh) return reply.status(404).send({ detail: 'Webhook not found' })
+    if (!wh.enabled) return reply.status(400).send({ detail: 'Webhook is disabled — enable it before retrying' })
+
+    const delivery = await prisma.webhookDelivery.findFirst({
+      where: { id: deliveryId, webhookId: id },
+      select: { id: true, event: true, payload: true, succeeded: true },
+    })
+    if (!delivery) return reply.status(404).send({ detail: 'Delivery not found' })
+    if (delivery.succeeded) return reply.status(400).send({ detail: 'Delivery already succeeded' })
+
+    await queueWebhookDelivery({
+      webhookId: id,
+      event:     delivery.event,
+      payload:   delivery.payload as Record<string, unknown>,
+    })
+    return reply.send({ ok: true, message: 'Retry queued' })
   })
 
   // ── GET /webhooks/:id/deliveries — recent delivery log ──────────────

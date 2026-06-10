@@ -1,9 +1,11 @@
 /**
  * AdminIntegrationsPage — Phase 10A — manage API keys + webhooks.
  *
- * Two tabs:
+ * Three tabs:
  *   1. API Keys — create / list / revoke (full key shown ONCE on create)
  *   2. Webhooks — create / list / edit / test / delete + delivery log
+ *   3. Health  — per-webhook health state, 24h/7d delivery aggregates,
+ *               last error + one-click retry (Phase 10)
  *
  * Lives at /admin/integrations.
  */
@@ -16,6 +18,7 @@ import { usePermission } from '@/lib/permissions'
 import {
   Plug, Plus, Loader2, Copy, Check, Trash2, X, Send, AlertCircle, Lock,
   Key, Webhook as WebhookIcon, ChevronRight, ChevronDown,
+  Activity, RefreshCw, MessageSquare,
 } from 'lucide-react'
 
 interface ApiKey {
@@ -35,7 +38,7 @@ interface Webhook {
   url:                string
   events:             string[]
   enabled:            boolean
-  type:               'generic' | 'slack'
+  type:               'generic' | 'slack' | 'teams'
   lastDeliveryAt:     string | null
   lastDeliveryStatus: string | null
   failureCount:       number
@@ -54,7 +57,7 @@ interface Delivery {
   deliveredAt:    string | null
 }
 
-type Tab = 'keys' | 'webhooks'
+type Tab = 'keys' | 'webhooks' | 'slack' | 'health'
 
 export function AdminIntegrationsPage() {
   const [tab, setTab] = useState<Tab>('keys')
@@ -103,9 +106,18 @@ export function AdminIntegrationsPage() {
         <TabButton active={tab === 'webhooks'} onClick={() => setTab('webhooks')} testId="tab-webhooks">
           <WebhookIcon className="h-4 w-4" /> Webhooks
         </TabButton>
+        <TabButton active={tab === 'slack'} onClick={() => setTab('slack')} testId="tab-slack">
+          <MessageSquare className="h-4 w-4" /> Slack
+        </TabButton>
+        <TabButton active={tab === 'health'} onClick={() => setTab('health')} testId="tab-health">
+          <Activity className="h-4 w-4" /> Health
+        </TabButton>
       </div>
 
-      {tab === 'keys' ? <ApiKeysSection /> : <WebhooksSection />}
+      {tab === 'keys' ? <ApiKeysSection />
+        : tab === 'webhooks' ? <WebhooksSection />
+        : tab === 'slack' ? <SlackSection />
+        : <HealthSection />}
     </div>
   )
 }
@@ -490,12 +502,13 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
 }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
-  const [type, setType] = useState<'generic' | 'slack'>('generic')
+  const [type, setType] = useState<'generic' | 'slack' | 'teams'>('generic')
   const [selectedEvents, setSelectedEvents] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  // Auto-detect: paste a Slack URL and we'll flip the type for them.
+  // Auto-detect: paste a Slack / Teams URL and we'll flip the type for them.
   const detectedSlack = /^https:\/\/hooks\.slack\.com\//.test(url.trim())
-  const effectiveType = detectedSlack ? 'slack' : type
+  const detectedTeams = /https:\/\/[^/]+\.(logic\.azure\.com|webhook\.office\.com|powerplatform\.com)(:\d+)?\//.test(url.trim())
+  const effectiveType = detectedSlack ? 'slack' : detectedTeams ? 'teams' : type
 
   const create = useMutation({
     mutationFn: async () => api.post('/admin/integrations/webhooks', {
@@ -537,9 +550,14 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
                 <Check className="h-3 w-3" /> Slack URL detected — events will be formatted as Slack messages.
               </p>
             )}
+            {detectedTeams && (
+              <p className="text-[11px] text-emerald-700 mt-1 inline-flex items-center gap-1">
+                <Check className="h-3 w-3" /> Teams workflow URL detected — events will be formatted as Adaptive Cards.
+              </p>
+            )}
           </div>
 
-          {!detectedSlack && (
+          {!detectedSlack && !detectedTeams && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Format</label>
               <div className="flex gap-2">
@@ -564,6 +582,17 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
                 >
                   <div className="font-medium text-gray-900">Slack blocks</div>
                   <div className="text-[11px] text-gray-500">Pretty rendering for Slack-compatible receivers</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType('teams')}
+                  className={`flex-1 text-left p-2.5 rounded-md border text-sm transition-colors ${
+                    type === 'teams' ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-300' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  data-testid="type-teams"
+                >
+                  <div className="font-medium text-gray-900">Teams card</div>
+                  <div className="text-[11px] text-gray-500">Adaptive Cards for Teams Workflows webhooks</div>
                 </button>
               </div>
             </div>
@@ -601,6 +630,414 @@ function CreateWebhookDialog({ events, onClose, onCreated }: {
             {create.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Creating…</> : 'Create webhook'}
           </Button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Health (Phase 10 — integration health dashboard) ─────────────────
+
+interface WebhookHealth {
+  id: string
+  name: string
+  url: string
+  type: 'generic' | 'slack' | 'teams'
+  enabled: boolean
+  events: string[]
+  health: 'healthy' | 'degraded' | 'failing' | 'disabled'
+  lastDeliveryAt: string | null
+  lastDeliveryStatus: string | null
+  consecutiveFailures: number
+  deliveries: { ok24h: number; fail24h: number; ok7d: number; fail7d: number }
+  lastFailure: {
+    deliveryId: string
+    event: string
+    errorMessage: string | null
+    responseStatus: number | null
+    at: string
+  } | null
+}
+
+interface HealthResponse {
+  webhooks: WebhookHealth[]
+  summary: {
+    healthy: number
+    degraded: number
+    failing: number
+    disabled: number
+    deliveries24h: number
+    failed24h: number
+    successRate7d: number | null
+  }
+  apiKeys: { active: number; expiringSoon: number; lastUsedAt: string | null }
+}
+
+const HEALTH_BADGE: Record<WebhookHealth['health'], { label: string; dot: string; cls: string }> = {
+  healthy:  { label: 'Healthy',  dot: 'bg-emerald-500', cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+  degraded: { label: 'Degraded', dot: 'bg-amber-500',   cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+  failing:  { label: 'Failing',  dot: 'bg-red-500',     cls: 'bg-red-50 border-red-200 text-red-700' },
+  disabled: { label: 'Disabled', dot: 'bg-gray-300',    cls: 'bg-gray-100 border-gray-200 text-gray-500' },
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'never'
+  const ms = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+function HealthSection() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery<HealthResponse>({
+    queryKey: ['integrations-health'],
+    queryFn:  () => api.get('/admin/integrations/health').then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  const retry = useMutation({
+    mutationFn: async ({ webhookId, deliveryId }: { webhookId: string; deliveryId: string }) =>
+      api.post(`/admin/integrations/webhooks/${webhookId}/deliveries/${deliveryId}/retry`),
+    onSuccess: () => {
+      // Delivery is async — give the worker a beat before refreshing.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['integrations-health'] }), 2000)
+    },
+  })
+
+  if (isLoading) return <div className="py-12 flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-gray-300" /></div>
+  if (!data) return null
+
+  const { webhooks, summary, apiKeys } = data
+
+  return (
+    <div data-testid="health-section">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <SummaryCard
+          label="Webhooks"
+          value={`${summary.healthy}/${webhooks.length} healthy`}
+          sub={[
+            summary.degraded > 0 ? `${summary.degraded} degraded` : null,
+            summary.failing > 0 ? `${summary.failing} failing` : null,
+            summary.disabled > 0 ? `${summary.disabled} disabled` : null,
+          ].filter(Boolean).join(' · ') || 'all good'}
+          tone={summary.failing > 0 ? 'red' : summary.degraded > 0 ? 'amber' : 'green'}
+          testId="health-card-webhooks"
+        />
+        <SummaryCard
+          label="Deliveries (24h)"
+          value={String(summary.deliveries24h)}
+          sub={summary.failed24h > 0 ? `${summary.failed24h} failed` : 'no failures'}
+          tone={summary.failed24h > 0 ? 'amber' : 'green'}
+          testId="health-card-deliveries"
+        />
+        <SummaryCard
+          label="Success rate (7d)"
+          value={summary.successRate7d != null ? `${summary.successRate7d}%` : '—'}
+          sub={summary.successRate7d != null ? 'of webhook deliveries' : 'no deliveries yet'}
+          tone={summary.successRate7d == null ? 'gray' : summary.successRate7d >= 95 ? 'green' : summary.successRate7d >= 80 ? 'amber' : 'red'}
+          testId="health-card-success-rate"
+        />
+        <SummaryCard
+          label="API keys"
+          value={String(apiKeys.active)}
+          sub={apiKeys.expiringSoon > 0
+            ? `${apiKeys.expiringSoon} expiring within 30d`
+            : apiKeys.lastUsedAt ? `last used ${relativeTime(apiKeys.lastUsedAt)}` : 'never used'}
+          tone={apiKeys.expiringSoon > 0 ? 'amber' : 'gray'}
+          testId="health-card-api-keys"
+        />
+      </div>
+
+      {/* Per-webhook health table */}
+      {webhooks.length === 0 ? (
+        <div className="text-center py-12 px-6 border border-dashed border-gray-200 rounded-xl">
+          <Activity className="h-7 w-7 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm text-gray-500 mb-1">No webhooks configured.</p>
+          <p className="text-xs text-gray-400">Add one on the Webhooks tab — health appears here once deliveries start flowing.</p>
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm" data-testid="health-table">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium">Status</th>
+                <th className="text-left px-4 py-3 font-medium">Webhook</th>
+                <th className="text-left px-4 py-3 font-medium">Last delivery</th>
+                <th className="text-left px-4 py-3 font-medium">24h</th>
+                <th className="text-left px-4 py-3 font-medium">7d</th>
+                <th className="text-left px-4 py-3 font-medium">Last error</th>
+                <th className="text-right px-4 py-3 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {webhooks.map(w => {
+                const badge = HEALTH_BADGE[w.health]
+                return (
+                  <tr key={w.id} data-testid={`health-row-${w.id}`} data-health={w.health}>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium border ${badge.cls}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
+                        {badge.label}
+                      </span>
+                      {w.consecutiveFailures > 0 && (
+                        <div className="text-[10.5px] text-red-600 mt-1">{w.consecutiveFailures} consecutive failure{w.consecutiveFailures > 1 ? 's' : ''}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900">{w.name}</div>
+                      <div className="text-xs text-gray-400 truncate max-w-[220px]" title={w.url}>{w.url}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-600">
+                      <div>{relativeTime(w.lastDeliveryAt)}</div>
+                      {w.lastDeliveryStatus && (
+                        <div className={w.lastDeliveryStatus === 'success' ? 'text-emerald-600' : 'text-red-600'}>
+                          {w.lastDeliveryStatus}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className="text-emerald-700">{w.deliveries.ok24h} ok</span>
+                      {w.deliveries.fail24h > 0 && <span className="text-red-600"> · {w.deliveries.fail24h} failed</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className="text-emerald-700">{w.deliveries.ok7d} ok</span>
+                      {w.deliveries.fail7d > 0 && <span className="text-red-600"> · {w.deliveries.fail7d} failed</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-600 max-w-[240px]">
+                      {w.lastFailure ? (
+                        <div>
+                          <div className="truncate" title={w.lastFailure.errorMessage ?? undefined}>
+                            {w.lastFailure.errorMessage ?? `HTTP ${w.lastFailure.responseStatus ?? '?'}`}
+                          </div>
+                          <div className="text-gray-400">{w.lastFailure.event} · {relativeTime(w.lastFailure.at)}</div>
+                        </div>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {w.lastFailure && w.enabled && (
+                        <button
+                          onClick={() => retry.mutate({ webhookId: w.id, deliveryId: w.lastFailure!.deliveryId })}
+                          disabled={retry.isPending}
+                          data-testid={`health-retry-${w.id}`}
+                          className="text-xs text-indigo-600 hover:text-indigo-700 inline-flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${retry.isPending ? 'animate-spin' : ''}`} /> Retry
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[11px] text-gray-400 mt-3">
+        Auto-refreshes every 30s. “Failing” = 3+ consecutive failures; “Degraded” = failures within the last 7 days.
+      </p>
+    </div>
+  )
+}
+
+function SummaryCard({ label, value, sub, tone, testId }: {
+  label: string
+  value: string
+  sub: string
+  tone: 'green' | 'amber' | 'red' | 'gray'
+  testId: string
+}) {
+  const toneCls = {
+    green: 'text-emerald-700',
+    amber: 'text-amber-700',
+    red:   'text-red-700',
+    gray:  'text-gray-900',
+  }[tone]
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl px-4 py-3" data-testid={testId}>
+      <div className="text-[11px] uppercase tracking-wider text-gray-400 font-medium">{label}</div>
+      <div className={`text-xl font-semibold mt-0.5 ${toneCls}`}>{value}</div>
+      <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
+    </div>
+  )
+}
+
+// ─── Slack (Phase 10 — Slack bot setup wizard) ─────────────────────────
+
+interface SlackConfig {
+  connected: boolean
+  teamId?: string
+  configuredAt?: string | null
+  hasSigningSecret?: boolean
+  hasBotToken?: boolean
+}
+
+const API_BASE = `${window.location.origin}/api/v1`
+
+const SLACK_MANIFEST = JSON.stringify({
+  display_information: { name: 'draftLegal', description: 'Contract search + approvals from Slack' },
+  features: {
+    bot_user: { display_name: 'draftLegal', always_online: true },
+    slash_commands: [{
+      command: '/contract',
+      url: `${API_BASE}/slack/commands`,
+      description: 'Search contracts',
+      usage_hint: 'search <query>',
+    }],
+  },
+  oauth_config: { scopes: { bot: ['commands', 'incoming-webhook', 'users:read', 'users:read.email'] } },
+  settings: {
+    interactivity: { is_enabled: true, request_url: `${API_BASE}/slack/interactions` },
+    org_deploy_enabled: false,
+    socket_mode_enabled: false,
+  },
+}, null, 2)
+
+function SlackSection() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery<SlackConfig>({
+    queryKey: ['slack-config'],
+    queryFn:  () => api.get('/admin/integrations/slack').then(r => r.data),
+  })
+
+  const [teamId, setTeamId] = useState('')
+  const [signingSecret, setSigningSecret] = useState('')
+  const [botToken, setBotToken] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [copiedManifest, setCopiedManifest] = useState(false)
+
+  const save = useMutation({
+    mutationFn: async () => api.put('/admin/integrations/slack', {
+      teamId: teamId.trim(),
+      signingSecret: signingSecret.trim(),
+      ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
+    }),
+    onSuccess: () => {
+      setTeamId(''); setSigningSecret(''); setBotToken(''); setError(null)
+      qc.invalidateQueries({ queryKey: ['slack-config'] })
+    },
+    onError: (err: { response?: { data?: { detail?: string } } }) =>
+      setError(err.response?.data?.detail ?? 'Failed to save.'),
+  })
+
+  const disconnect = useMutation({
+    mutationFn: async () => api.delete('/admin/integrations/slack'),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['slack-config'] }),
+  })
+
+  if (isLoading) return <div className="py-12 flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-gray-300" /></div>
+
+  if (data?.connected) {
+    return (
+      <div className="max-w-2xl" data-testid="slack-connected">
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <h2 className="text-sm font-semibold text-gray-900">Slack workspace connected</h2>
+          </div>
+          <dl className="text-sm space-y-2">
+            <div className="flex justify-between"><dt className="text-gray-500">Workspace (team ID)</dt><dd className="font-mono text-xs text-gray-900">{data.teamId}</dd></div>
+            <div className="flex justify-between"><dt className="text-gray-500">Signing secret</dt><dd className="text-emerald-700 text-xs">configured</dd></div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Bot token (button-click identity)</dt>
+              <dd className={data.hasBotToken ? 'text-emerald-700 text-xs' : 'text-amber-700 text-xs'}>
+                {data.hasBotToken ? 'configured' : 'not set — buttons fall back to web links'}
+              </dd>
+            </div>
+            {data.configuredAt && (
+              <div className="flex justify-between"><dt className="text-gray-500">Connected</dt><dd className="text-xs text-gray-600">{new Date(data.configuredAt).toLocaleString()}</dd></div>
+            )}
+          </dl>
+          <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+            <p>• <code className="bg-gray-100 px-1 rounded">/contract search &lt;query&gt;</code> works in any channel the app is in.</p>
+            <p>• Approval requests post Approve / Reject buttons via your <button className="text-indigo-600 hover:underline" onClick={() => { /* tab switch hint */ }}>Slack webhook</button> — add one on the Webhooks tab (paste a hooks.slack.com URL) subscribed to <code className="bg-gray-100 px-1 rounded">approval.submitted</code>.</p>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={() => { if (confirm('Disconnect Slack? Slash commands and approval buttons will stop working.')) disconnect.mutate() }}
+              data-testid="slack-disconnect"
+              className="text-xs text-red-600 hover:text-red-700 inline-flex items-center gap-1"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Disconnect
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl space-y-4" data-testid="slack-setup">
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">1 · Create the Slack app</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">api.slack.com/apps</a> →
+          “Create New App” → “From a manifest”, pick your workspace, and paste this manifest. It pre-wires the
+          <code className="bg-gray-100 px-1 rounded mx-1">/contract</code> command and the Approve/Reject interactivity URL.
+        </p>
+        <div className="relative">
+          <pre className="text-[10.5px] bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto max-h-48" data-testid="slack-manifest">{SLACK_MANIFEST}</pre>
+          <button
+            onClick={() => { navigator.clipboard.writeText(SLACK_MANIFEST); setCopiedManifest(true); setTimeout(() => setCopiedManifest(false), 1500) }}
+            className="absolute top-2 right-2 p-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+            data-testid="slack-copy-manifest"
+            aria-label="Copy manifest"
+          >
+            {copiedManifest ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mt-3">
+          Slack must be able to reach these URLs — in local dev use a tunnel (ngrok / cloudflared) and adjust the manifest.
+        </p>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">2 · Connect it here</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          From the app's <span className="font-medium">Basic Information</span> page copy the <span className="font-medium">Signing Secret</span>;
+          the <span className="font-medium">Team ID</span> (starts with T) is in your Slack workspace URL or app install page. The bot token
+          (<span className="font-mono">xoxb-…</span>, after installing the app) is optional but lets Approve/Reject clicks act as the matching draftLegal user.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Team ID</label>
+            <Input value={teamId} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTeamId(e.target.value)} placeholder="T0123ABCD" data-testid="slack-team-id" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Signing secret</label>
+            <Input value={signingSecret} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSigningSecret(e.target.value)} placeholder="8f742231b10e8888abcd99yyyzzz85a5" type="password" data-testid="slack-signing-secret" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bot token <span className="text-gray-400 font-normal">(optional)</span></label>
+            <Input value={botToken} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBotToken(e.target.value)} placeholder="xoxb-…" type="password" data-testid="slack-bot-token" />
+          </div>
+          {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">{error}</div>}
+          <div className="flex justify-end">
+            <Button
+              onClick={() => save.mutate()}
+              disabled={!teamId.trim() || !signingSecret.trim() || save.isPending}
+              data-testid="slack-save"
+              className="bg-indigo-600 hover:bg-indigo-700"
+            >
+              {save.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Connecting…</> : 'Connect Slack'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">3 · Notifications channel</h2>
+        <p className="text-xs text-gray-500">
+          On the <span className="font-medium">Webhooks</span> tab, add your Slack incoming-webhook URL
+          (<span className="font-mono">hooks.slack.com/…</span>) subscribed to the events you care about —
+          include <code className="bg-gray-100 px-1 rounded">approval.submitted</code> to get actionable
+          Approve/Reject cards in the channel.
+        </p>
       </div>
     </div>
   )

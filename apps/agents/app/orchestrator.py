@@ -763,6 +763,11 @@ async def run_agent_chat_stream(
                     "contract_get", "contract_summarize",
                     "matter_list",
                     "approval_list",
+                    # 2026-06-10 audit — portfolio_compare emits the topic ×
+                    # contract matrix Table artifact (~2-10 KB); compliance_get
+                    # returns the full per-framework report. Both broke at the
+                    # 800-char cap exactly as described above.
+                    "portfolio_compare", "compliance_get",
                 } else 800
                 truncated = len(result_str) > limit
                 preview   = result_str[:limit]

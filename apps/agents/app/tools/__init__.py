@@ -55,6 +55,8 @@ from .contract_create_from_template import build_contract_create_from_template
 from .comment_add        import build_comment_add
 from .contract_update    import build_contract_update
 from .request_create     import build_request_create
+from .approval_route     import build_approval_route
+from .compliance_get     import build_compliance_get
 
 
 def get_read_tools(org_id: str, user_id: str | None = None) -> list[StructuredTool]:
@@ -95,12 +97,14 @@ def get_read_tools(org_id: str, user_id: str | None = None) -> list[StructuredTo
         build_obligations_list(org_id),
         build_renewal_advice(org_id),
         build_matter_list(org_id, user_id),
+        build_compliance_get(org_id),
         build_contract_create_from_template(org_id, user_id),
         # Write tools — return an awaiting-confirmation payload that the
         # orchestrator surfaces as an ActionPreview card.
         build_comment_add(org_id, user_id),
         build_contract_update(org_id, user_id),
         build_request_create(org_id, user_id),
+        build_approval_route(org_id, user_id),
     ]
 
 

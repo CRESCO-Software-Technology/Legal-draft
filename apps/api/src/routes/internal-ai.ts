@@ -3583,6 +3583,39 @@ export async function internalAiRoutes(app: FastifyInstance) {
     })
   })
 
+  // ── POST /internal/ai/tools/compliance_get (Phase 10 — Compliance Agent) ───
+  // Read the persisted regulatory compliance report from
+  // Contract.metadata._compliance (written by POST /contracts/:id/
+  // compliance-check). Fast read — the agent answers "is this GDPR
+  // compliant?" from the stored report instead of re-running the LLM
+  // pass; when none exists it tells the user where to run one.
+  const ComplianceGetSchema = z.object({
+    orgId:      z.string().min(1),
+    contractId: z.string().min(1),
+  })
+  app.post('/tools/compliance_get', async (req, reply) => {
+    let body
+    try { body = ComplianceGetSchema.parse(req.body) }
+    catch (err) {
+      return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
+    }
+    const contract = await prisma.contract.findFirst({
+      where: { id: body.contractId, orgId: body.orgId, deletedAt: null },
+      select: { id: true, title: true, type: true, metadata: true },
+    })
+    if (!contract) return reply.status(404).send({ detail: 'Contract not found in this org' })
+    const report = ((contract.metadata ?? {}) as Record<string, unknown>)._compliance ?? null
+    return reply.send({
+      contractId: contract.id,
+      title:      contract.title,
+      type:       contract.type,
+      report,
+      note: report
+        ? undefined
+        : 'No compliance check has been run on this contract yet. The user can run one from the Compliance section on the contract page (or POST /contracts/:id/compliance-check).',
+    })
+  })
+
   // ── POST /internal/ai/tools/portfolio_compare ──────────────────────────────
   // P-fix #2 (2026-05-02). Multi-doc compare. Closes the "compare these N
   // contracts side-by-side" gap that Harvey/Ironclad serve natively.
