@@ -12,6 +12,7 @@ CHAT-001: "Draft an NDA for Acme Corp" → full end-to-end generation
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 import logging
 import os
 from typing import Any
@@ -157,7 +158,7 @@ async def step_understand(state: DraftState) -> DraftState:
     ])
 
     try:
-        parsed = json.loads(response.content)
+        parsed = loads_lenient(response.content)
         return {
             **state,
             "contract_type": parsed.get("contract_type", "OTHER"),
@@ -259,7 +260,7 @@ async def step_select_template(state: DraftState) -> DraftState:
     ])
 
     try:
-        parsed = json.loads(response.content)
+        parsed = loads_lenient(response.content)
         selected_id = parsed.get("selected_template_id")
         selected = next((t for t in templates_data if t["id"] == selected_id), None)
         return {
@@ -308,7 +309,7 @@ async def step_fill_variables(state: DraftState) -> DraftState:
     ])
 
     try:
-        variable_values = json.loads(response.content)
+        variable_values = loads_lenient(response.content)
         return {**state, "variable_values": variable_values}
     except json.JSONDecodeError:
         logger.warning("step_fill_variables: JSON parse failed, returning empty variables")
@@ -382,7 +383,7 @@ async def step_review(state: DraftState) -> DraftState:
     ])
 
     try:
-        review = json.loads(response.content)
+        review = loads_lenient(response.content)
         return {
             **state,
             "completeness_score": float(review.get("completeness_score", 0.7)),

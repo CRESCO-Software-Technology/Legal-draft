@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..config import active_model, active_provider, settings
+from ..jsonish import loads_lenient
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -81,8 +82,11 @@ async def detect_binder(req: DetectBinderRequest) -> DetectBinderResponse:
 
     try:
         raw = await _call_llm(provider, model, text_sample)
-        parsed = json.loads(raw)
-        documents = [DetectedDocument(**d) for d in (parsed.get("documents") or [])]
+        parsed = loads_lenient(raw)
+        docs_raw = parsed.get("documents")
+        if not isinstance(docs_raw, list):  # LLM drift: object/str instead of array
+            docs_raw = []
+        documents = [DetectedDocument(**d) for d in docs_raw if isinstance(d, dict)]
         result = DetectBinderResponse(
             isBinder=bool(parsed.get("isBinder", False)),
             confidence=float(parsed.get("confidence", 0.0)),
@@ -121,10 +125,30 @@ async def _call_llm(provider: str, model: str, text: str) -> str:
         return resp.choices[0].message.content or "{}"
 
     elif provider == "google":
-        import google.generativeai as genai
-        genai.configure(api_key=settings.google_api_key)
-        gmodel = genai.GenerativeModel(model)
-        response = await gmodel.generate_content_async(prompt)
-        return response.text
+        # langchain_google_genai is the Gemini client the orchestrator
+        # already depends on — the legacy google.generativeai SDK was
+        # never in the venv, so this branch crashed with ImportError
+        # whenever resolve_provider fell back to google (found in the
+        # 2026-06-10 full-app review: intake/classify/detect-binder all
+        # silently returned their fallback payloads).
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        llm = ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=settings.google_api_key,
+            max_output_tokens=4096,  # bounded, but generous: Gemini 2.5 counts
+            # internal "thinking" tokens against this limit — a tight cap
+            # (256-1024, parity with the other branches) starves the
+            # actual answer and truncates the JSON mid-object.
+        )
+        resp = await llm.ainvoke(prompt)
+        content = resp.content
+        if isinstance(content, list):
+            # LangChain can return content as a list of blocks — extract
+            # text parts instead of str()-ing the Python repr.
+            content = "".join(
+                p.get("text", "") if isinstance(p, dict) else str(p)
+                for p in content
+            )
+        return content
 
     raise ValueError(f"Unknown provider: {provider}")

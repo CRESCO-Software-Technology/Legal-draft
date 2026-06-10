@@ -17,6 +17,7 @@ renewal advisor (P5.3) can walk a structured list.
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 import logging
 import os
 
@@ -128,7 +129,7 @@ Extract the obligations now. JSON only."""
             content = content.split("```", 2)[1]
             if content.startswith("json"):
                 content = content[4:]
-        parsed = json.loads(content.strip())
+        parsed = loads_lenient(content)
         obligations = parsed.get("obligations") or []
         # Lightweight normalisation — coerce each entry to the expected
         # keys + types so downstream code never has to defensive-check.

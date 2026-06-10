@@ -17,6 +17,7 @@ read it without re-running the pass.
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 import logging
 
 from fastapi import APIRouter
@@ -194,7 +195,7 @@ Run the compliance checks now. JSON only."""
             content = content.split("```", 2)[1]
             if content.startswith("json"):
                 content = content[4:]
-        parsed = json.loads(content.strip())
+        parsed = loads_lenient(content)
         frameworks = _normalise_frameworks(parsed.get("frameworks") or [], requested)
         overall = parsed.get("overall") or {}
         critical = sum(

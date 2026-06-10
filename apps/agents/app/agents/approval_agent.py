@@ -10,6 +10,7 @@ Output is stored on ApprovalInstance via PATCH /api/v1/approvals/:instanceId/sum
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 import logging
 from typing import Any
 
@@ -121,7 +122,7 @@ def _safe_json(text: str) -> Any:
         lines = text.split('\n')
         text = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
     try:
-        return json.loads(text)
+        return loads_lenient(text)
     except json.JSONDecodeError:
         # Try to find JSON within the text
         import re

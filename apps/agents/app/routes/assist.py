@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Any, Literal
 import json
+from ..jsonish import loads_lenient
 import os
 
 from app.agents.assist_agent import run_assist, AssistAction
@@ -138,7 +139,7 @@ Classify now. JSON only."""
             raw = raw.split("```", 2)[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        parsed = json.loads(raw.strip())
+        parsed = loads_lenient(raw)
         cat = str(parsed.get("category") or "skip").lower().strip()
         pos = str(parsed.get("position") or "skip").lower().strip()
         if pos not in ("market", "aggressive", "weak", "off", "skip"):
@@ -304,7 +305,7 @@ Analyze how well the submitted clause matches each position."""
     ])
 
     try:
-        result = json.loads(response.content)
+        result = loads_lenient(response.content)
         return {
             "clauseText": req.clauseText,
             "positions": req.positions,
@@ -383,7 +384,7 @@ Judge this clause against the rules and return the JSON now."""
             content = content.split("```", 2)[1]
             if content.startswith("json"):
                 content = content[4:]
-        result = json.loads(content.strip())
+        result = loads_lenient(content)
         return result
     except (json.JSONDecodeError, Exception) as e:  # noqa: BLE001
         return {
@@ -489,7 +490,7 @@ Produce the three-variant redline now."""
             content = content.split("```", 2)[1]
             if content.startswith("json"):
                 content = content[4:]
-        result = json.loads(content.strip())
+        result = loads_lenient(content)
         # Validate variants shape — we want all three + basic fields.
         variants = result.get("variants") or []
         by_aggression = {v.get("aggression"): v for v in variants if isinstance(v, dict)}

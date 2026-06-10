@@ -13,6 +13,7 @@ Examples:
 from __future__ import annotations
 
 import json
+from ..jsonish import loads_lenient
 from typing import Any
 
 import httpx
@@ -74,7 +75,7 @@ def _parse_json(content: str) -> dict:
     if content.startswith("```"):
         lines = content.split("\n")
         content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(content)
+    return loads_lenient(content)
 
 
 def _clean_filters(raw: dict) -> dict:
