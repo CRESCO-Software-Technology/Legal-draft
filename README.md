@@ -5,12 +5,13 @@
 ### The open-source alternative to Ironclad + Harvey.
 **Self-hosted, AI-native contract lifecycle management — your contracts never leave your servers.**
 
+[![Live app](https://img.shields.io/badge/live%20app-app.draft--legal.com-10b981)](https://app.draft-legal.com)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-emerald.svg)](./LICENSE)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-docker%20compose-blue)](#quickstart)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 [![Good first issues](https://img.shields.io/github/issues/AniketTati/draft-legal/good%20first%20issue?color=7057ff&label=good%20first%20issues)](https://github.com/AniketTati/draft-legal/labels/good%20first%20issue)
 
-[**▶ Watch the 60-second demo**](https://youtu.be/ZCeWJNUQHpI) · [Quickstart](#quickstart) · [Contributing](./CONTRIBUTING.md) · [Legal contributors](./CONTRIBUTING-LEGAL.md)
+[**🚀 Try the live app**](https://app.draft-legal.com) · [**▶ Watch the 60-second demo**](https://youtu.be/ZCeWJNUQHpI) · [Quickstart](#quickstart) · [Contributing](./CONTRIBUTING.md) · [Legal contributors](./CONTRIBUTING-LEGAL.md)
 
 [![Watch the 60-second demo](https://img.youtube.com/vi/ZCeWJNUQHpI/maxresdefault.jpg)](https://youtu.be/ZCeWJNUQHpI)
 
@@ -51,6 +52,8 @@ The market's two leaders prove the thesis: **Harvey** has the intelligence (anal
 ---
 
 ## Quickstart
+
+> **Just want to look around?** A hosted instance runs at **[app.draft-legal.com](https://app.draft-legal.com)** — no setup needed. Self-hosting (below) is the recommended way to run it on your own contracts.
 
 **Prerequisites:** [Docker](https://www.docker.com/) (running), [Node 22+](https://github.com/nvm-sh/nvm) with [pnpm 9+](https://pnpm.io/installation), and Python 3.11+.
 
