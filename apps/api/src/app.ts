@@ -125,7 +125,11 @@ export async function buildApp() {
   //   - The marketing site origins (draftlegal-marketing.web.app + the apex
   //     domain draft-legal.com) so the public Contact form can POST to
   //     /api/v1/marketing/contact cross-origin.
+  //   - The hosted app origin app.draft-legal.com (2026-06-10: the app is
+  //     served from its own subdomain, not just behind the /api proxy).
   //   - Local dev (Vite on 5173, marketing dev on 5174).
+  //   - Anything in CORS_ALLOWED_ORIGINS (comma-separated) — add new
+  //     deployment origins via env, no code change needed.
   const allowedOrigins = new Set<string>([
     process.env.FRONTEND_URL ?? 'http://localhost:5173',
     'http://localhost:5173',
@@ -133,13 +137,19 @@ export async function buildApp() {
     'https://draftlegal-marketing.web.app',
     'https://draft-legal.com',
     'https://www.draft-legal.com',
+    'https://app.draft-legal.com',
+    ...(process.env.CORS_ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map(o => o.trim())
+      .filter(Boolean),
   ])
   await app.register(cors, {
     origin: (origin, cb) => {
       // Same-origin / curl / server-to-server: no Origin header — allow.
       if (!origin) return cb(null, true)
       if (allowedOrigins.has(origin)) return cb(null, true)
-      cb(new Error(`Origin ${origin} not allowed`), false)
+      // statusCode so the error handler reports 403, not a generic 500.
+      cb(Object.assign(new Error(`Origin ${origin} not allowed`), { statusCode: 403 }), false)
     },
     credentials: true,
   })
