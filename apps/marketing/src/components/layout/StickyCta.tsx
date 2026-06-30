@@ -25,7 +25,7 @@ export function StickyCta() {
     >
       <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-slate-200 bg-white/95 px-4 py-2 shadow-lg backdrop-blur md:hidden">
         <span className="text-xs font-medium text-slate-700">
-          Try Draft Legal free
+          Try CRESCO Legal free
         </span>
         <Button asChild size="sm">
           <a href={`${APP_URL}/register`}>Start →</a>

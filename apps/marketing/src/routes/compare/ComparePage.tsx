@@ -18,18 +18,18 @@ export default function ComparePage() {
   const articleSchema = {
     '@context': 'https://schema.org',
     '@type': 'Article',
-    headline: `Draft Legal vs ${data.competitorName}`,
+    headline: `CRESCO Legal vs ${data.competitorName}`,
     description: data.tldr,
     url: `${SITE_URL}/compare/${data.slug}`,
-    author: { '@type': 'Organization', name: 'Draft Legal' },
+    author: { '@type': 'Organization', name: 'CRESCO Legal' },
     datePublished: '2026-05-01',
   }
 
   return (
     <>
       <SEO
-        title={`Draft Legal vs ${data.competitorName}`}
-        description={`Honest head-to-head: Draft Legal vs ${data.competitorName}. Lifecycle coverage, openness, AI capabilities, pricing.`}
+        title={`CRESCO Legal vs ${data.competitorName}`}
+        description={`Honest head-to-head: CRESCO Legal vs ${data.competitorName}. Lifecycle coverage, openness, AI capabilities, pricing.`}
         path={`/compare/${data.slug}`}
         schema={articleSchema}
       />
@@ -41,7 +41,7 @@ export default function ComparePage() {
               ← All comparisons
             </Link>
             <h1 className="mt-4 heading-display text-slate-900">
-              Draft Legal vs <span className="text-emerald-700">{data.competitorName}</span>
+              CRESCO Legal vs <span className="text-emerald-700">{data.competitorName}</span>
             </h1>
 
             <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-6 md:p-8">
@@ -63,11 +63,11 @@ export default function ComparePage() {
         <div className="container-page">
           <div className="mx-auto max-w-5xl">
             <div className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
-              This is what Draft Legal looks like
+              This is what CRESCO Legal looks like
             </div>
             <BrowserFrame
               src="/product/dashboard.png"
-              alt="Draft Legal dashboard"
+              alt="CRESCO Legal dashboard"
               shadow="lifted"
               url="app.draft-legal.com/dashboard"
             />
@@ -84,11 +84,11 @@ export default function ComparePage() {
                   <Check className="h-4 w-4" />
                 </span>
                 <h2 className="text-lg font-bold tracking-tight text-slate-900">
-                  Pick Draft Legal if
+                  Pick CRESCO Legal if
                 </h2>
               </div>
               <ul className="mt-5 space-y-3 text-sm text-slate-700">
-                {data.pickDraftLegalIf.map((p) => (
+                {data.pickProductIf.map((p) => (
                   <li key={p} className="flex gap-2">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                     <span>{p}</span>
@@ -150,7 +150,7 @@ export default function ComparePage() {
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild>
                 <a href={`${APP_URL}/register`}>
-                  Try Draft Legal free <ArrowRight className="ml-1.5 h-4 w-4" />
+                  Try CRESCO Legal free <ArrowRight className="ml-1.5 h-4 w-4" />
                 </a>
               </Button>
               <Button asChild variant="outline">
@@ -165,7 +165,7 @@ export default function ComparePage() {
 
       <CtaStrip
         eyebrow="Honest comparisons"
-        title="See how Draft Legal stacks up everywhere."
+        title="See how CRESCO Legal stacks up everywhere."
         subtitle="We compare ourselves to every major CLM — including the ones we don't always win against."
       />
     </>

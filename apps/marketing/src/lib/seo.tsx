@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { SITE_URL } from './utils'
+import { APP_LOGO_SRC, APP_NAME } from './brand'
 
 type SEOProps = {
   title: string
@@ -41,7 +42,7 @@ const upsertScript = (id: string, json: string) => {
 }
 
 export function SEO({ title, description, path, schema, ogImage = '/og-image.png' }: SEOProps) {
-  const fullTitle = title.includes('Draft Legal') ? title : `${title} | Draft Legal`
+  const fullTitle = title.includes(APP_NAME) ? title : `${title} | ${APP_NAME}`
   const url = `${SITE_URL}${path}`
   const fullOg = ogImage.startsWith('http') ? ogImage : `${SITE_URL}${ogImage}`
 
@@ -72,9 +73,9 @@ export function SEO({ title, description, path, schema, ogImage = '/og-image.png
 export const orgSchema = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
-  name: 'Draft Legal',
+  name: APP_NAME,
   url: SITE_URL,
-  logo: `${SITE_URL}/favicon.svg`,
+  logo: `${SITE_URL}${APP_LOGO_SRC}`,
   description:
     'Open-source, agent-first contract lifecycle management. AGPL-3.0 licensed, self-host the same code we run.',
   sameAs: ['https://github.com/AniketTati/draft-legal'],
@@ -83,7 +84,7 @@ export const orgSchema = {
 export const softwareSchema = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
-  name: 'Draft Legal',
+  name: APP_NAME,
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Web, Linux, Docker',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },

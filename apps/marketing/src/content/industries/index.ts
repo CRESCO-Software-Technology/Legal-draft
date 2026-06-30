@@ -16,7 +16,7 @@ export const industries: Record<string, Industry> = {
     label: 'SaaS',
     hero: 'CLM for B2B SaaS legal teams.',
     intro:
-      'Sales-led B2B SaaS teams move 50-200 NDAs and MSAs/quarter, with DPAs flowing in from every enterprise customer. Draft Legal handles the volume without slowing the deal.',
+      'Sales-led B2B SaaS teams move 50-200 NDAs and MSAs/quarter, with DPAs flowing in from every enterprise customer. CRESCO Legal handles the volume without slowing the deal.',
     contracts: [
       { type: 'NDA (mutual + sales)', share: '40%', note: 'high-volume, low-touch' },
       { type: 'MSA (customer)', share: '20%', note: 'liability cap, governing law, term' },
@@ -65,7 +65,7 @@ export const industries: Record<string, Industry> = {
     label: 'Healthcare',
     hero: 'CLM for healthcare and digital-health legal teams.',
     intro:
-      'Healthcare contracts are compliance landmines: BAAs, DPAs, sub-processor lists, regulatory exhibits. Draft Legal helps your team stay compliant without becoming a bottleneck.',
+      'Healthcare contracts are compliance landmines: BAAs, DPAs, sub-processor lists, regulatory exhibits. CRESCO Legal helps your team stay compliant without becoming a bottleneck.',
     contracts: [
       { type: 'BAA (Business Associate Agreement)', share: '30%', note: 'HIPAA-required' },
       { type: 'DPA + sub-processor', share: '25%', note: 'patient data flows' },
@@ -101,7 +101,7 @@ export const industries: Record<string, Industry> = {
       },
       {
         title: 'Self-host for ePHI',
-        body: 'For teams that can\'t put PHI on a third-party SaaS, run Draft Legal in your own VPC. Same code, your infra.',
+        body: 'For teams that can\'t put PHI on a third-party SaaS, run CRESCO Legal in your own VPC. Same code, your infra.',
       },
     ],
     persona: { org: 'Caldera Health-shaped digital-health platform', size: '~600 employees, ~$60M ARR' },
@@ -157,7 +157,7 @@ export const industries: Record<string, Industry> = {
     label: 'Biotech',
     hero: 'CLM for biotech, pharma, and research-stage life sciences.',
     intro:
-      'Biotech contracts revolve around IP, MTAs, and research collaborations. Draft Legal gives a 2-person legal team the leverage of a 20-person team.',
+      'Biotech contracts revolve around IP, MTAs, and research collaborations. CRESCO Legal gives a 2-person legal team the leverage of a 20-person team.',
     contracts: [
       { type: 'Research collaboration', share: '25%', note: 'with universities, pharma' },
       { type: 'MTA (Material Transfer)', share: '20%', note: 'inbound and outbound' },
@@ -194,7 +194,7 @@ export const industries: Record<string, Industry> = {
       },
       {
         title: 'Diligence-ready',
-        body: 'Build the data room with one click — Draft Legal generates a categorized index your bankers and acquirers will actually use.',
+        body: 'Build the data room with one click — CRESCO Legal generates a categorized index your bankers and acquirers will actually use.',
       },
     ],
     persona: { org: 'Lumen Bio-shaped pre-clinical biotech', size: '~80 employees, $35M raised' },
@@ -204,7 +204,7 @@ export const industries: Record<string, Industry> = {
     label: 'Logistics',
     hero: 'CLM for 3PLs, freight, and supply-chain operators.',
     intro:
-      'Customer SLAs and carrier agreements define your business. Draft Legal helps Ops and Legal track the obligations that matter — penalties, carve-outs, peak-season terms.',
+      'Customer SLAs and carrier agreements define your business. CRESCO Legal helps Ops and Legal track the obligations that matter — penalties, carve-outs, peak-season terms.',
     contracts: [
       { type: 'Customer SLA / TSA', share: '35%', note: 'service-level commitments' },
       { type: 'Carrier agreement', share: '30%', note: 'freight providers, drayage' },

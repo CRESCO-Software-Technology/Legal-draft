@@ -9,7 +9,7 @@ import { cn, SITE_URL } from '@/lib/utils'
 const offerSchema = {
   '@context': 'https://schema.org',
   '@type': 'Product',
-  name: 'Draft Legal',
+  name: 'CRESCO Legal',
   url: `${SITE_URL}/pricing`,
   offers: tiers.map((t) => ({
     '@type': 'Offer',

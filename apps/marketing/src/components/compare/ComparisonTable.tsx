@@ -1,6 +1,7 @@
 import { Fragment } from 'react'
 import { Check, X, Minus } from 'lucide-react'
 import type { CompareGroup, CompareVerdict } from '@/content/compare/types'
+import { APP_NAME } from '@/lib/brand'
 
 const Cell = ({ v }: { v: CompareVerdict }) => {
   if (v === 'yes')
@@ -39,7 +40,7 @@ export function ComparisonTable({
         <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <tr>
             <th className="px-5 py-3 text-left">Capability</th>
-            <th className="bg-emerald-50 px-5 py-3 text-center text-emerald-800">Draft Legal</th>
+            <th className="bg-emerald-50 px-5 py-3 text-center text-emerald-800">{APP_NAME}</th>
             <th className="px-5 py-3 text-center">{competitorName}</th>
             <th className="hidden px-5 py-3 text-left md:table-cell">Note</th>
           </tr>
@@ -62,7 +63,7 @@ export function ComparisonTable({
                 >
                   <td className="px-5 py-3.5 font-medium text-slate-800">{r.label}</td>
                   <td className="bg-emerald-50/60 px-5 py-3.5 text-center">
-                    <Cell v={r.draftLegal} />
+                    <Cell v={r.product} />
                   </td>
                   <td className="px-5 py-3.5 text-center">
                     <Cell v={r.competitor} />

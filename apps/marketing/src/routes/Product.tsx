@@ -19,11 +19,11 @@ const stageScreenshot: Record<string, { src: string; alt: string; url: string }>
 const productSchema = {
   '@context': 'https://schema.org',
   '@type': 'Product',
-  name: 'Draft Legal',
+  name: 'CRESCO Legal',
   description:
     'Open-source, agent-first contract lifecycle management. Full coverage from intake through post-signature obligations.',
   url: `${SITE_URL}/product`,
-  brand: { '@type': 'Brand', name: 'Draft Legal' },
+  brand: { '@type': 'Brand', name: 'CRESCO Legal' },
 }
 
 export default function Product() {
@@ -31,7 +31,7 @@ export default function Product() {
     <>
       <SEO
         title="Product"
-        description="Tour the full contract lifecycle in Draft Legal — intake, drafting, negotiation, approval, signature, and post-signature obligations."
+        description="Tour the full contract lifecycle in CRESCO Legal — intake, drafting, negotiation, approval, signature, and post-signature obligations."
         path="/product"
         schema={productSchema}
       />
@@ -46,7 +46,7 @@ export default function Product() {
               12 agents. 6 stages. 1 platform.
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              Most CLM tools cover one part of the lifecycle and bolt on AI later. Draft Legal was
+              Most CLM tools cover one part of the lifecycle and bolt on AI later. CRESCO Legal was
               designed agent-first, end-to-end. Here's what each stage looks like.
             </p>
           </div>

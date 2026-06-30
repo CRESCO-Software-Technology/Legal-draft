@@ -42,6 +42,7 @@ import { renderHtmlToPdfAndStore } from '../lib/gotenberg.js'
 import { queueSigningReminder } from '../lib/queue.js'
 import { extractObligationsForContract, CostCapExceededError } from '../lib/obligation-extract.js'
 import { fireWebhook } from '../lib/webhook-events.js'
+import { APP_NAME } from '../lib/brand.js'
 
 const SignersSchema = z.object({
   signers: z.array(z.object({
@@ -166,7 +167,7 @@ export async function signatureRoutes(app: FastifyInstance) {
             signer: s,
             baseUrl,
             senderName: sender?.name ?? null,
-            orgName: orgRow?.name ?? 'draftLegal',
+            orgName: orgRow?.name ?? APP_NAME,
             contractTitle: contract.title,
             contractType: contract.type,
             message: fresh.message,
@@ -515,7 +516,7 @@ export async function signatureRoutes(app: FastifyInstance) {
               signedKeyPrefix: `signed/${sr.contractId}`,
               contractTitle: cMeta.title,
               contractType: cMeta.type,
-              orgName: cMeta.org?.name ?? 'draftLegal',
+              orgName: cMeta.org?.name ?? APP_NAME,
               signatureRequestId: sr.id,
               completedAt,
               signers: fresh!.signers

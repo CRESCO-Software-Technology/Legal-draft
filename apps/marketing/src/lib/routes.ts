@@ -56,12 +56,12 @@ export const allRoutes: RouteDef[] = [
   { path: '/security', title: 'Security', description: 'Self-host story, RBAC, audit log, encryption, AI safety, compliance roadmap.', priority: 0.9 },
   { path: '/pricing', title: 'Pricing', description: 'Free, AGPL-3.0 licensed, self-hosted. Free hosted demo for evaluation. Managed cloud once we have traction.', priority: 0.9 },
   { path: '/open-source', title: 'Open Source', description: 'AGPL-3.0 licensed CLM you can read, audit, and run anywhere. Three-step self-host quickstart.', priority: 0.9 },
-  { path: '/contact', title: 'Contact', description: 'Talk to the draftLegal team about your contract operations.', priority: 0.5 },
+  { path: '/contact', title: 'Contact', description: 'Talk to the CRESCO Legal team about your contract operations.', priority: 0.5 },
   { path: '/alternatives', title: 'CLM Alternatives', description: 'Neutral comparisons against Ironclad, Harvey, Spellbook, DocuSign CLM, and Icertis — only publicly verifiable claims.', priority: 0.8 },
   ...compareSlugs.map((slug) => ({
     path: `/compare/${slug}`,
-    title: `draftLegal vs ${slug}`,
-    description: `Neutral comparison: draftLegal vs ${slug}. Openness, deployment posture, AI extensibility — only publicly verifiable rows.`,
+    title: `CRESCO Legal vs ${slug}`,
+    description: `Neutral comparison: CRESCO Legal vs ${slug}. Openness, deployment posture, AI extensibility — only publicly verifiable rows.`,
     priority: 0.8,
   })),
   ...industrySlugs.map((slug) => ({
@@ -77,7 +77,7 @@ export const allRoutes: RouteDef[] = [
     description: `Plain-English guide to ${slug.replace(/-/g, ' ')} for legal, ops, and procurement teams.`,
     priority: 0.6,
   })),
-  { path: '/templates', title: 'Free Contract Templates', description: 'Lawyer-reviewed NDA, MSA, DPA, BAA, SOW templates. Free download — or generate one with Draft Legal.', priority: 0.7 },
+  { path: '/templates', title: 'Free Contract Templates', description: 'Lawyer-reviewed NDA, MSA, DPA, BAA, SOW templates. Free download — or generate one with CRESCO Legal.', priority: 0.7 },
   ...templateSlugs.map((slug) => ({
     path: `/templates/${slug}`,
     title: `Free ${slug.toUpperCase()} Template`,

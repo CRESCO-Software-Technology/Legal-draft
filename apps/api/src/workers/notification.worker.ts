@@ -13,6 +13,7 @@ import { prisma } from '../lib/prisma.js'
 import { queueNotification } from '../lib/queue.js'
 import type { NotificationJob, EscalationJob, SigningReminderJob } from '../lib/queue.js'
 import { createAuditEvent } from '../lib/audit.js'
+import { APP_NAME } from '../lib/brand.js'
 import { AuditAction } from '@clm/types'
 import { sendSigningEmailForSigner } from '../lib/signing-email.js'
 
@@ -210,7 +211,7 @@ async function handleSigningReminder(data: SigningReminderJob): Promise<void> {
       signer: s,
       baseUrl,
       senderName: sender?.name ?? null,
-      orgName: contract.org?.name ?? 'draftLegal',
+      orgName: contract.org?.name ?? APP_NAME,
       contractTitle: contract.title,
       contractType: contract.type,
       message: data.kind === 'final'

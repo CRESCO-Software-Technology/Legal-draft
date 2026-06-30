@@ -23,6 +23,7 @@ import {
   verifySlackSignature, findOrgBySlackTeam, resolveSlackUser,
   searchResultBlocks, helpBlocks,
 } from '../lib/slack.js'
+import { APP_NAME } from '../lib/brand.js'
 
 const APP_BASE = process.env.PUBLIC_APP_URL ?? 'http://localhost:5173'
 
@@ -127,7 +128,7 @@ export async function slackRoutes(app: FastifyInstance) {
     try { ref = JSON.parse(action.value ?? '{}') }
     catch { ref = {} }
     if (!ref.instanceId || !ref.stepId) {
-      return reply.send(ephemeral('⚠️ This approval button is missing its reference — decide in draftLegal instead.'))
+      return reply.send(ephemeral(`⚠️ This approval button is missing its reference — decide in ${APP_NAME} instead.`))
     }
 
     // Identify the clicker. Without a bot token we can't see their email,
@@ -140,8 +141,8 @@ export async function slackRoutes(app: FastifyInstance) {
       const link = instance ? `${APP_BASE}/contracts/${instance.contractId}?tab=approval` : APP_BASE
       return reply.send(ephemeral(
         auth.config.botToken
-          ? `⚠️ Couldn't match your Slack account to a draftLegal user. <${link}|Decide in draftLegal> instead.`
-          : `🔐 Deciding from Slack needs the bot token connected (Admin → Integrations → Slack). <${link}|Decide in draftLegal> instead.`,
+          ? `⚠️ Couldn't match your Slack account to a ${APP_NAME} user. <${link}|Decide in ${APP_NAME}> instead.`
+          : `🔐 Deciding from Slack needs the bot token connected (Admin → Integrations → Slack). <${link}|Decide in ${APP_NAME}> instead.`,
       ))
     }
 
@@ -195,7 +196,7 @@ export async function slackRoutes(app: FastifyInstance) {
       text: `${emoji} ${decision === 'APPROVED' ? 'Approved' : 'Rejected'} by ${user.email} via Slack`,
       blocks: [
         { type: 'section', text: { type: 'mrkdwn',
-          text: `${emoji} *${decision === 'APPROVED' ? 'Approved' : 'Rejected'}* by ${user.email} via Slack · <${APP_BASE}/contracts/${instance.contractId}?tab=approval|view in draftLegal>` } },
+          text: `${emoji} *${decision === 'APPROVED' ? 'Approved' : 'Rejected'}* by ${user.email} via Slack · <${APP_BASE}/contracts/${instance.contractId}?tab=approval|view in ${APP_NAME}>` } },
       ],
     })
   })

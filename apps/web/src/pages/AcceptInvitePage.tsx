@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2, AlertCircle, Mail, Building2 } from 'lucide-react'
+import { APP_NAME } from '@/lib/brand'
 
 interface InvitePreview {
   email: string
@@ -122,7 +123,7 @@ export function AcceptInvitePage() {
     <Shell>
       <div data-testid="invite-valid">
         <h1 className="text-2xl font-semibold text-foreground">Accept Invite</h1>
-        <p className="text-sm text-muted-foreground mt-1">Set up your account to join draftLegal</p>
+        <p className="text-sm text-muted-foreground mt-1">Set up your account to join {APP_NAME}</p>
 
         {/* Inviter context — F-09 explicit ask: tell the user what
             they're accepting into BEFORE they fill the form */}

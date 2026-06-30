@@ -67,7 +67,7 @@ export default function Contact() {
     <>
       <SEO
         title="Contact"
-        description="Talk to the Draft Legal team about your CLM workflows, security review, migration from another vendor, or open-source contributions."
+        description="Talk to the CRESCO Legal team about your CLM workflows, security review, migration from another vendor, or open-source contributions."
         path="/contact"
       />
 
@@ -196,7 +196,7 @@ export default function Contact() {
                         value={form.message}
                         onChange={(e) => setForm({ ...form, message: e.target.value })}
                         className="input-field"
-                        placeholder="We process ~150 NDAs and MSAs/quarter and we are looking at draftLegal to consolidate the workflow."
+                        placeholder="We process ~150 NDAs and MSAs/quarter and we are looking at CRESCO Legal to consolidate the workflow."
                       />
                     </Field>
 

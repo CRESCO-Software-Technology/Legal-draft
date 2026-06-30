@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom'
 import { Check, X, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { APP_NAME } from '@/lib/brand'
 
 // Only rows that are publicly verifiable from each vendor's own documentation
 // or open-standards status. No claims about pricing tiers, implementation
 // time, or anything that varies by deal — we cannot verify those.
-const cols = ['draftLegal', 'Ironclad', 'Harvey', 'Spellbook'] as const
+const cols = [APP_NAME, 'Ironclad', 'Harvey', 'Spellbook'] as const
 
 const rows: { label: string; values: ('yes' | 'no' | 'partial' | string)[] }[] = [
   { label: 'Open source (AGPL-3.0)',                values: ['yes', 'no', 'no', 'no'] },
@@ -65,7 +66,7 @@ export function CompareTeaser() {
                     key={c}
                     className={cn(
                       'px-5 py-3 text-center',
-                      c === 'draftLegal' && 'bg-emerald-50 text-emerald-800'
+                      c === APP_NAME && 'bg-emerald-50 text-emerald-800'
                     )}
                   >
                     {c}

@@ -36,7 +36,7 @@ const sections = [
   {
     icon: Server,
     title: 'Self-host & data residency',
-    body: 'Run Draft Legal in your VPC, your region, your network. Air-gapped deployments are supported (BYO LLM or on-prem inference). Cloud lets you choose region (US, EU, APAC) and we never replicate data outside the region you choose.',
+    body: 'Run CRESCO Legal in your VPC, your region, your network. Air-gapped deployments are supported (BYO LLM or on-prem inference). Cloud lets you choose region (US, EU, APAC) and we never replicate data outside the region you choose.',
   },
   {
     icon: ScrollText,
@@ -50,7 +50,7 @@ const securitySchema = {
   '@type': 'FAQPage',
   mainEntity: sections.map((s) => ({
     '@type': 'Question',
-    name: `How does Draft Legal handle ${s.title.toLowerCase()}?`,
+    name: `How does CRESCO Legal handle ${s.title.toLowerCase()}?`,
     acceptedAnswer: { '@type': 'Answer', text: s.body },
   })),
 }
@@ -60,7 +60,7 @@ export default function Security() {
     <>
       <SEO
         title="Security"
-        description="How Draft Legal handles tenant isolation, RBAC, audit logging, encryption, AI safety, and self-host data residency."
+        description="How CRESCO Legal handles tenant isolation, RBAC, audit logging, encryption, AI safety, and self-host data residency."
         path="/security"
         schema={securitySchema}
       />

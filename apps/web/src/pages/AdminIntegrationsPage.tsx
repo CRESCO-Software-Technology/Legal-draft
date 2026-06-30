@@ -20,6 +20,7 @@ import {
   Key, Webhook as WebhookIcon, ChevronRight, ChevronDown,
   Activity, RefreshCw, MessageSquare,
 } from 'lucide-react'
+import { APP_NAME } from '@/lib/brand'
 
 interface ApiKey {
   id:         string
@@ -880,9 +881,9 @@ interface SlackConfig {
 const API_BASE = `${window.location.origin}/api/v1`
 
 const SLACK_MANIFEST = JSON.stringify({
-  display_information: { name: 'draftLegal', description: 'Contract search + approvals from Slack' },
+  display_information: { name: APP_NAME, description: 'Contract search + approvals from Slack' },
   features: {
-    bot_user: { display_name: 'draftLegal', always_online: true },
+    bot_user: { display_name: APP_NAME, always_online: true },
     slash_commands: [{
       command: '/contract',
       url: `${API_BASE}/slack/commands`,
@@ -1001,7 +1002,7 @@ function SlackSection() {
         <p className="text-xs text-gray-500 mb-3">
           From the app's <span className="font-medium">Basic Information</span> page copy the <span className="font-medium">Signing Secret</span>;
           the <span className="font-medium">Team ID</span> (starts with T) is in your Slack workspace URL or app install page. The bot token
-          (<span className="font-mono">xoxb-…</span>, after installing the app) is optional but lets Approve/Reject clicks act as the matching draftLegal user.
+          (<span className="font-mono">xoxb-…</span>, after installing the app) is optional but lets Approve/Reject clicks act as the matching {APP_NAME} user.
         </p>
         <div className="space-y-3">
           <div>

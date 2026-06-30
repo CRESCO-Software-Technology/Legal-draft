@@ -58,6 +58,7 @@ import { marketingRoutes } from './routes/marketing.js'
 import { slackRoutes } from './routes/slack.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { assertRouterConfigured } from './lib/aiRouter.js'
+import { assertProductionSecrets } from './lib/security-config.js'
 
 function devLogger() {
   const stream = pinoPretty({ colorize: true })
@@ -254,6 +255,9 @@ export async function buildApp() {
   // Phase 10 — Slack slash command + interactive buttons (public; signed
   // by the org's Slack signing secret rather than a user JWT).
   await app.register(slackRoutes,          { prefix: '/api/v1/slack' })
+
+  // Refuse to boot in production with dev/placeholder secrets.
+  assertProductionSecrets()
 
   // D.0.3 — log the platform routing table at boot; throws if a critical
   // tier (default, fast) has no platform key set.

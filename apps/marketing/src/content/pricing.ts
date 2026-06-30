@@ -48,7 +48,7 @@ export const tiers: PricingTier[] = [
 export const pricingFaqs = [
   {
     q: 'Is there a managed cloud option?',
-    a: 'Not yet — we publicly run draftLegal at app.draft-legal.com so you can evaluate the product without installing anything, but that demo runs on free-tier infrastructure with deliberate scale and speed limits. It is not intended for production data. Once we have traction we will publish managed-cloud and enterprise tiers with real SLAs. In the meantime, reach out via the Contact page if you need a managed deployment.',
+    a: 'Not yet — we publicly run CRESCO Legal at app.draft-legal.com so you can evaluate the product without installing anything, but that demo runs on free-tier infrastructure with deliberate scale and speed limits. It is not intended for production data. Once we have traction we will publish managed-cloud and enterprise tiers with real SLAs. In the meantime, reach out via the Contact page if you need a managed deployment.',
   },
   {
     q: 'Is anything held back from the open-source version?',
@@ -56,7 +56,7 @@ export const pricingFaqs = [
   },
   {
     q: 'Can I bring my own AI provider keys?',
-    a: 'Yes. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY and draftLegal routes through your account. Switchable per agent / per tier.',
+    a: 'Yes. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY and CRESCO Legal routes through your account. Switchable per agent / per tier.',
   },
   {
     q: 'What does the public demo at app.draft-legal.com cost?',

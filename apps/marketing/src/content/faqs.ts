@@ -2,7 +2,7 @@ export type FAQ = { q: string; a: string }
 
 export const homeFaqs: FAQ[] = [
   {
-    q: 'Is draftLegal really free?',
+    q: 'Is CRESCO Legal really free?',
     a: 'Yes. The full product is AGPL-3.0 licensed and free to self-host forever — no feature gating, no seat caps. Managed cloud and enterprise tiers will arrive once we have real traction and SLAs to stand behind.',
   },
   {
@@ -18,7 +18,7 @@ export const homeFaqs: FAQ[] = [
     a: 'Self-host: your data stays in your VPC. Public demo: stored in our project on Google Cloud / Neon for evaluation only. Encrypted at rest and in transit either way. Single-tenant + region pinning will be available on the enterprise tier once it ships.',
   },
   {
-    q: 'Which AI models does draftLegal use?',
+    q: 'Which AI models does CRESCO Legal use?',
     a: 'Anthropic Claude, OpenAI GPT, and Google Gemini are all supported and switchable per agent. Bring your own API keys to control spend and data routing.',
   },
   {

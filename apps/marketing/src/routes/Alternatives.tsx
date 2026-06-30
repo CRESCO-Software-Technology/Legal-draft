@@ -8,11 +8,11 @@ import { SITE_URL } from '@/lib/utils'
 const itemListSchema = {
   '@context': 'https://schema.org',
   '@type': 'ItemList',
-  name: 'CLM Alternatives — Draft Legal comparisons',
+  name: 'CLM Alternatives — CRESCO Legal comparisons',
   itemListElement: Object.values(compareData).map((c, i) => ({
     '@type': 'ListItem',
     position: i + 1,
-    name: `Draft Legal vs ${c.competitorName}`,
+    name: `CRESCO Legal vs ${c.competitorName}`,
     url: `${SITE_URL}/compare/${c.slug}`,
   })),
 }
@@ -22,7 +22,7 @@ export default function Alternatives() {
     <>
       <SEO
         title="CLM Alternatives — neutral comparisons"
-        description="Comparing Ironclad, Harvey, Spellbook, DocuSign CLM, or Icertis against an open-source alternative? draftLegal is AGPL-3.0 licensed CLM you can self-host and audit. Neutral head-to-head pages on each."
+        description="Comparing Ironclad, Harvey, Spellbook, DocuSign CLM, or Icertis against an open-source alternative? CRESCO Legal is AGPL-3.0 licensed CLM you can self-host and audit. Neutral head-to-head pages on each."
         path="/alternatives"
         schema={itemListSchema}
       />
@@ -57,7 +57,7 @@ export default function Alternatives() {
                 <Link to={`/compare/${c.slug}`} className="block">
                   <div className="flex items-baseline justify-between gap-3">
                     <h2 className="text-xl font-bold tracking-tight text-slate-900 group-hover:text-emerald-700">
-                      Draft Legal vs {c.competitorName}
+                      CRESCO Legal vs {c.competitorName}
                     </h2>
                     <ArrowRight className="h-5 w-5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-1 group-hover:text-emerald-700" />
                   </div>
@@ -74,7 +74,7 @@ export default function Alternatives() {
 
       <CtaStrip
         eyebrow="The simplest path"
-        title="Try Draft Legal yourself."
+        title="Try CRESCO Legal yourself."
         subtitle="No demo call required. Self-host in 3 commands or sign up free."
       />
     </>

@@ -122,7 +122,7 @@ export function RegisterPage() {
       <div className="w-full max-w-sm space-y-6 p-8 border border-border rounded-lg bg-card shadow-sm">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Create account</h1>
-          <p className="text-sm text-muted-foreground mt-1">Set up your CLM workspace</p>
+          <p className="text-sm text-muted-foreground mt-1">Set up your workspace</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

@@ -1,15 +1,22 @@
 import { Link } from 'react-router-dom'
-import { Wordmark } from '@/components/brand/Wordmark'
+import { AppLogo } from '@/components/brand/AppLogo'
+import { APP_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 
-export function Logo({ className, size = '2xl' }: { className?: string; size?: 'md' | 'lg' | 'xl' | '2xl' }) {
+export function Logo({
+  className,
+  variant = 'full',
+}: {
+  className?: string
+  variant?: 'full' | 'mark'
+}) {
   return (
     <Link
       to="/"
       className={cn('inline-flex items-center', className)}
-      aria-label="draftLegal — home"
+      aria-label={`${APP_NAME} — home`}
     >
-      <Wordmark size={size} />
+      <AppLogo variant={variant} className={variant === 'full' ? 'h-9 max-w-[200px]' : undefined} />
     </Link>
   )
 }

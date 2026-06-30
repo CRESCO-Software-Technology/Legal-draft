@@ -9,7 +9,7 @@ export default function IndustriesHub() {
     <>
       <SEO
         title="Industries — CLM by vertical"
-        description="Draft Legal builds for SaaS, healthcare, manufacturing, biotech, and logistics legal teams. See how the platform fits your industry's contracts."
+        description="CRESCO Legal builds for SaaS, healthcare, manufacturing, biotech, and logistics legal teams. See how the platform fits your industry's contracts."
         path="/industries"
       />
 
@@ -24,7 +24,7 @@ export default function IndustriesHub() {
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600">
               Healthcare cares about BAAs and PHI. Manufacturing cares about supplier MSAs and
-              force majeure. Same Draft Legal — different framings.
+              force majeure. Same CRESCO Legal — different framings.
             </p>
           </div>
         </div>

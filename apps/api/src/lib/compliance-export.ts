@@ -12,6 +12,7 @@
  * Uint8Array the caller can stream back as application/pdf.
  */
 import { PDFDocument, StandardFonts, rgb, PageSizes } from 'pdf-lib'
+import { APP_NAME } from './brand.js'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { prisma } from './prisma.js'
 import { s3, S3_BUCKET } from './storage.js'
@@ -117,10 +118,10 @@ export async function generateCompliancePackage({ contractId, orgId }: Complianc
   // ── 2. Build the cover/audit/signers PDF via pdf-lib ─────────────────
   const out = await PDFDocument.create()
   out.setTitle(ascii(`Compliance Package — ${contract.title}`))
-  out.setAuthor(ascii(contract.org?.name ?? 'draftLegal'))
+  out.setAuthor(ascii(contract.org?.name ?? APP_NAME))
   out.setSubject('Contract compliance + audit evidence')
-  out.setProducer('draftLegal')
-  out.setCreator('draftLegal / compliance-export')
+  out.setProducer(APP_NAME)
+  out.setCreator(`${APP_NAME} / compliance-export`)
   out.setCreationDate(new Date())
 
   const helv = await out.embedFont(StandardFonts.Helvetica)
@@ -180,12 +181,12 @@ export async function generateCompliancePackage({ contractId, orgId }: Complianc
     y -= Math.max(20, dy + 4)
   }
   pageNum = 1
-  drawFooter(page, helv, pageNum, contract.org?.name ?? 'draftLegal')
+  drawFooter(page, helv, pageNum, contract.org?.name ?? APP_NAME)
 
   // From here on, every addPage bumps pageNum and the footer is drawn
   // when the page is done filling.
   const newPage = () => { page = out.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN_Y; return page }
-  const finishPage = () => drawFooter(page, helv, ++pageNum, contract.org?.name ?? 'draftLegal')
+  const finishPage = () => drawFooter(page, helv, ++pageNum, contract.org?.name ?? APP_NAME)
 
   // ── Signers page (per signature request) ──
   if (signatureRequests.length > 0) {

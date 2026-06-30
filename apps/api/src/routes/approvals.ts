@@ -360,10 +360,7 @@ export async function approvalRoutes(app: FastifyInstance) {
   app.patch('/:instanceId/summary', async (req, reply) => {
     const secret = req.headers['x-internal-secret']
     if (!secret || secret !== process.env.INTERNAL_SERVICE_SECRET) {
-      // In dev with no secret set, allow all — in prod this header is required
-      if (process.env.NODE_ENV === 'production') {
-        return reply.status(401).send({ error: 'Unauthorized' })
-      }
+      return reply.status(401).send({ error: 'Unauthorized' })
     }
 
     const { instanceId } = req.params as { instanceId: string }

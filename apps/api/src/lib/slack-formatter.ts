@@ -12,6 +12,8 @@
  * is the rich rendering. We always include both.
  */
 
+import { APP_NAME } from './brand.js'
+
 interface SlackBlock {
   type: string
   text?: { type: string; text: string }
@@ -150,7 +152,7 @@ export function formatForSlack(event: string, data: Record<string, unknown>): Sl
             { type: 'button', style: 'danger', action_id: 'approval_reject',
               text: { type: 'plain_text', text: '❌ Reject' }, value: ref },
             { type: 'button', action_id: 'approval_open',
-              text: { type: 'plain_text', text: 'Open in draftLegal' }, url: `${link}?tab=approval` },
+              text: { type: 'plain_text', text: `Open in ${APP_NAME}` }, url: `${link}?tab=approval` },
           ] },
         ],
       }

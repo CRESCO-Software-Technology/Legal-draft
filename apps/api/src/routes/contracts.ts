@@ -1076,7 +1076,7 @@ export async function contractRoutes(app: FastifyInstance) {
   app.post('/:id/versions/:versionId/chunk', async (req, reply) => {
     // Internal-only — validated via x-internal-secret header
     const secret = req.headers['x-internal-secret']
-    if (secret !== process.env.INTERNAL_SERVICE_SECRET) {
+    if (!secret || secret !== process.env.INTERNAL_SERVICE_SECRET) {
       return reply.status(401).send({ detail: 'Unauthorized' })
     }
     const { id, versionId } = req.params as { id: string; versionId: string }

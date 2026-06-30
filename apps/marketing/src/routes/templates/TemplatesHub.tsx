@@ -9,7 +9,7 @@ export default function TemplatesHub() {
     <>
       <SEO
         title="Free Contract Templates"
-        description="Lawyer-reviewed NDA, MSA, DPA, BAA, SOW, and other contract templates. Free download. Or generate one in 30 seconds with Draft Legal."
+        description="Lawyer-reviewed NDA, MSA, DPA, BAA, SOW, and other contract templates. Free download. Or generate one in 30 seconds with CRESCO Legal."
         path="/templates"
       />
 
@@ -24,7 +24,7 @@ export default function TemplatesHub() {
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600">
               Free downloads. Plain-English clause guides. Or — once you have one — generate a
-              tailored draft in 30 seconds with Draft Legal.
+              tailored draft in 30 seconds with CRESCO Legal.
             </p>
             <p className="mx-auto mt-3 max-w-xl text-xs leading-6 text-slate-500">
               These templates are general-purpose starting points, not legal advice. Always have a
@@ -66,7 +66,7 @@ export default function TemplatesHub() {
       <CtaStrip
         eyebrow="Skip the template"
         title="Generate a tailored contract in 30 seconds."
-        subtitle="Draft Legal's Draft Agent assembles from your templates and playbook — not from generic AI."
+        subtitle="CRESCO Legal's Draft Agent assembles from your templates and playbook — not from generic AI."
       />
     </>
   )

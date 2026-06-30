@@ -14,6 +14,8 @@
  * out of scope for webhook-based notifications.)
  */
 
+import { APP_NAME } from './brand.js'
+
 interface AdaptiveElement { type: string; [k: string]: unknown }
 
 interface TeamsMessage {
@@ -68,7 +70,7 @@ const line = (text: string): AdaptiveElement =>
   ({ type: 'TextBlock', text, wrap: true, spacing: 'Small' })
 const facts = (pairs: Array<[string, unknown]>): AdaptiveElement =>
   ({ type: 'FactSet', facts: pairs.filter(([, v]) => v != null && v !== '').map(([t, v]) => ({ title: t, value: String(v) })) })
-const open = (url: string, label = 'Open in draftLegal'): AdaptiveElement =>
+const open = (url: string, label = `Open in ${APP_NAME}`): AdaptiveElement =>
   ({ type: 'Action.OpenUrl', title: label, url })
 
 export function formatForTeams(event: string, data: Record<string, unknown>): TeamsMessage {
@@ -130,7 +132,7 @@ export function formatForTeams(event: string, data: Record<string, unknown>): Te
       )
     case 'webhook.test':
       return card([
-        title('🔔 Test event from draftLegal'),
+        title(`🔔 Test event from ${APP_NAME}`),
         line('Your Teams webhook is wired correctly. You should see real events here as contracts move through their lifecycle.'),
       ])
     default: {

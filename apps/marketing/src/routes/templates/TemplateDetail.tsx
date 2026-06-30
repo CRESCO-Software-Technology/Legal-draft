@@ -31,7 +31,7 @@ export default function TemplateDetail() {
     headline: t.title,
     description: t.tldr,
     url: `${SITE_URL}/templates/${t.slug}`,
-    author: { '@type': 'Organization', name: 'Draft Legal' },
+    author: { '@type': 'Organization', name: 'CRESCO Legal' },
   }
 
   return (
@@ -143,7 +143,7 @@ export default function TemplateDetail() {
                     </h3>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-emerald-50">
-                    Tell Draft Legal who you're contracting with and what terms you need — get a
+                    Tell CRESCO Legal who you're contracting with and what terms you need — get a
                     polished draft in 30 seconds, ready to send.
                   </p>
                   <a

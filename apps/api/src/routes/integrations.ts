@@ -34,6 +34,7 @@ import { requirePermission } from '../middleware/permissions.js'
 import { hashApiKey, API_KEY_PREFIX } from '../middleware/auth.js'
 import { queueWebhookDelivery } from '../lib/queue.js'
 import { isTeamsUrl } from '../lib/teams-formatter.js'
+import { APP_NAME } from '../lib/brand.js'
 
 // Canonical list of events a webhook can subscribe to. Keep stable —
 // these are part of the public API contract.
@@ -250,7 +251,7 @@ export async function integrationsRoutes(app: FastifyInstance) {
       webhookId: id,
       event:     'webhook.test',
       payload:   {
-        message: 'This is a test event from draftLegal',
+        message: `This is a test event from ${APP_NAME}`,
         firedAt: new Date().toISOString(),
         orgId,
       },

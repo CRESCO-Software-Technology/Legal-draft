@@ -12,6 +12,7 @@
  * half: `/contract` slash command + Approve/Reject button clicks.
  */
 import crypto from 'node:crypto'
+import { APP_NAME } from './brand.js'
 import { prisma } from './prisma.js'
 
 export interface SlackOrgConfig {
@@ -142,7 +143,7 @@ export function helpBlocks(): Record<string, unknown> {
     text: 'Usage: /contract search <query>',
     blocks: [
       { type: 'section', text: { type: 'mrkdwn',
-        text: '*draftLegal commands*\n• `/contract search <query>` — find contracts by title or counterparty\n• `/contract <query>` — shorthand for search' } },
+        text: `*${APP_NAME} commands*\n• \`/contract search <query>\` — find contracts by title or counterparty\n• \`/contract <query>\` — shorthand for search' } },
     ],
   }
 }

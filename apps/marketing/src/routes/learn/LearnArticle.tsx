@@ -25,7 +25,7 @@ export default function LearnArticle() {
     headline: article.title,
     description: article.tldr,
     url: `${SITE_URL}/learn/${article.slug}`,
-    author: { '@type': 'Organization', name: 'Draft Legal' },
+    author: { '@type': 'Organization', name: 'CRESCO Legal' },
     datePublished: '2026-05-01',
   }
 
@@ -80,7 +80,7 @@ export default function LearnArticle() {
           {article.productLink && (
             <div className="mt-12 rounded-2xl border border-slate-200 bg-slate-50 p-6 md:p-8">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                In Draft Legal
+                In CRESCO Legal
               </div>
               <a
                 href={article.productLink.href}

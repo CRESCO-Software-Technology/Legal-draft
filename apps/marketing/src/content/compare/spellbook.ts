@@ -6,8 +6,8 @@ export const spellbook: CompareData = {
   competitorOneLiner:
     'AI contract drafting and review assistant that runs as a Microsoft Word add-in. Popular with corporate legal teams who live in Word.',
   tldr:
-    'Spellbook is a Word add-in for AI drafting and clause review. draftLegal is a standalone Contract Lifecycle Management platform — intake, drafting, redline, approvals, signature, obligations — that you self-host under AGPL-3.0. Pick Spellbook if you want AI in your existing Word workflow. Pick draftLegal if you want one platform for the full lifecycle that your security team can audit.',
-  pickDraftLegalIf: [
+    'Spellbook is a Word add-in for AI drafting and clause review. CRESCO Legal is a standalone Contract Lifecycle Management platform — intake, drafting, redline, approvals, signature, obligations — that you self-host under AGPL-3.0. Pick Spellbook if you want AI in your existing Word workflow. Pick CRESCO Legal if you want one platform for the full lifecycle that your security team can audit.',
+  pickProductIf: [
     'You want a full CLM, not just an AI plugin inside Word',
     'You want approvals, signatures, and obligation tracking in the same product',
     'You need to self-host the code and audit it',
@@ -19,29 +19,29 @@ export const spellbook: CompareData = {
     'You already have a separate contract repository and just need AI clause review',
   ],
   migration:
-    'Spellbook is a drafting assistant, not a contract repository. Migration to draftLegal usually means bringing executed contracts in from a DMS or drive. You can keep Spellbook for Word-side drafting if your team prefers.',
+    'Spellbook is a drafting assistant, not a contract repository. Migration to CRESCO Legal usually means bringing executed contracts in from a DMS or drive. You can keep Spellbook for Word-side drafting if your team prefers.',
   groups: [
     {
       title: 'Product category',
       rows: [
-        { label: 'Full CLM (intake → obligations)', draftLegal: 'yes', competitor: 'no' },
-        { label: 'Word add-in', draftLegal: 'no', competitor: 'yes' },
-        { label: 'Standalone web app', draftLegal: 'yes', competitor: 'partial' },
+        { label: 'Full CLM (intake → obligations)', product: 'yes', competitor: 'no' },
+        { label: 'Word add-in', product: 'no', competitor: 'yes' },
+        { label: 'Standalone web app', product: 'yes', competitor: 'partial' },
       ],
     },
     {
       title: 'Openness & deployment',
       rows: [
-        { label: 'Open source (AGPL-3.0)', draftLegal: 'yes', competitor: 'no' },
-        { label: 'Self-host on your infra', draftLegal: 'yes', competitor: 'no' },
-        { label: 'Code transparency (full repo)', draftLegal: 'yes', competitor: 'no' },
+        { label: 'Open source (AGPL-3.0)', product: 'yes', competitor: 'no' },
+        { label: 'Self-host on your infra', product: 'yes', competitor: 'no' },
+        { label: 'Code transparency (full repo)', product: 'yes', competitor: 'no' },
       ],
     },
     {
       title: 'AI & extensibility',
       rows: [
-        { label: 'Bring your own AI provider keys', draftLegal: 'yes', competitor: 'unknown' },
-        { label: 'Switchable LLM provider per agent', draftLegal: 'yes', competitor: 'unknown' },
+        { label: 'Bring your own AI provider keys', product: 'yes', competitor: 'unknown' },
+        { label: 'Switchable LLM provider per agent', product: 'yes', competitor: 'unknown' },
       ],
     },
   ],

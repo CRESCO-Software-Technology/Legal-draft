@@ -14,10 +14,10 @@ export default function IndustryDetail() {
   const schema = {
     '@context': 'https://schema.org',
     '@type': 'Service',
-    name: `Draft Legal for ${i.label}`,
+    name: `CRESCO Legal for ${i.label}`,
     description: i.intro,
     url: `${SITE_URL}/industries/${i.slug}`,
-    provider: { '@type': 'Organization', name: 'Draft Legal' },
+    provider: { '@type': 'Organization', name: 'CRESCO Legal' },
     areaServed: i.label,
   }
 
@@ -66,7 +66,7 @@ export default function IndustryDetail() {
                 The contracts {i.label} runs on
               </h2>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                Contract mix observed in our reference {i.label} portfolios — Draft Legal's
+                Contract mix observed in our reference {i.label} portfolios — CRESCO Legal's
                 Classify and Review Agents handle each type with type-specific fields and prompts.
               </p>
               <ul className="mt-8 space-y-3">
@@ -114,7 +114,7 @@ export default function IndustryDetail() {
         <div className="container-page">
           <div className="mx-auto max-w-5xl">
             <h2 className="heading-section text-slate-900">
-              Why Draft Legal works for {i.label}
+              Why CRESCO Legal works for {i.label}
             </h2>
             <ul className="mt-10 grid gap-6 md:grid-cols-2">
               {i.features.map((f) => (

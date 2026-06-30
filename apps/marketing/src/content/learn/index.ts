@@ -39,7 +39,7 @@ export const learnArticles: Record<string, LearnArticle> = {
       },
       {
         heading: 'CLM vs. eSignature vs. Contract Repository',
-        body: 'Standalone eSignature tools only handle signing. Contract repositories store executed contracts but do not manage drafting or approvals. Full CLM covers the whole lifecycle. Modern AI-first platforms (like draftLegal) collapse these into one product: agents handle drafting and review, the repository indexes everything, and signature is built in.',
+        body: 'Standalone eSignature tools only handle signing. Contract repositories store executed contracts but do not manage drafting or approvals. Full CLM covers the whole lifecycle. Modern AI-first platforms (like CRESCO Legal) collapse these into one product: agents handle drafting and review, the repository indexes everything, and signature is built in.',
       },
       {
         heading: 'What to look for in a CLM platform in 2026',
@@ -47,7 +47,7 @@ export const learnArticles: Record<string, LearnArticle> = {
       },
     ],
     relatedSlugs: ['ai-contract-review', 'ai-contract-drafting', 'contract-repository', 'contract-approval-workflow', 'obligation-management'],
-    productLink: { label: 'See how Draft Legal handles each lifecycle stage →', href: '/product' },
+    productLink: { label: 'See how CRESCO Legal handles each lifecycle stage →', href: '/product' },
   },
   'ai-contract-review': {
     slug: 'ai-contract-review',
@@ -77,7 +77,7 @@ export const learnArticles: Record<string, LearnArticle> = {
       },
     ],
     relatedSlugs: ['ai-contract-drafting', 'contract-redlining', 'clause-library', 'contract-lifecycle-management'],
-    productLink: { label: 'See the Draft Legal Review Agent →', href: '/product#draft' },
+    productLink: { label: 'See the CRESCO Legal Review Agent →', href: '/product#draft' },
   },
   'ai-contract-drafting': {
     slug: 'ai-contract-drafting',
@@ -155,7 +155,7 @@ export const learnArticles: Record<string, LearnArticle> = {
       },
     ],
     relatedSlugs: ['ai-contract-drafting', 'contract-redlining', 'contract-lifecycle-management'],
-    productLink: { label: 'How Draft Legal manages your clause library →', href: '/product' },
+    productLink: { label: 'How CRESCO Legal manages your clause library →', href: '/product' },
   },
   'nda': {
     slug: 'nda',

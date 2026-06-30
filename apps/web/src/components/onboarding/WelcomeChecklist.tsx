@@ -34,6 +34,7 @@ import {
   X,
   Sparkles,
 } from 'lucide-react'
+import { APP_NAME } from '@/lib/brand'
 
 type Org = {
   settings?: {
@@ -166,7 +167,7 @@ export function WelcomeChecklist() {
           <Sparkles className="h-3.5 w-3.5" />
         </span>
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Get the most out of draftLegal</h2>
+          <h2 className="text-sm font-semibold text-foreground">Get the most out of {APP_NAME}</h2>
           <p className="text-xs text-muted-foreground">
             {doneCount} of {items.length} done — these all live on their own pages so you can
             come back any time.

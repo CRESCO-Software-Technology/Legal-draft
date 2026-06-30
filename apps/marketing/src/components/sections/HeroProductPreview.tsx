@@ -11,7 +11,7 @@ export function HeroProductPreview() {
         <div className="relative mx-auto max-w-6xl">
           <BrowserFrame
             src="/product/dashboard.png"
-            alt="Draft Legal dashboard — pending approvals, recent activity, and the AI assistant"
+            alt="CRESCO Legal dashboard — pending approvals, recent activity, and the AI assistant"
             shadow="lifted"
             url="app.draft-legal.com/dashboard"
           />

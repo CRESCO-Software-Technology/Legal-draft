@@ -1,7 +1,7 @@
 /**
- * Wordmark — the draftLegal brand wordmark.
+ * Wordmark — the CRESCO Legal brand wordmark.
  *
- *   draft   slate-600 / semibold — graphite pencil gray, the
+ *   CRESCO   slate-600 / semibold — graphite pencil gray, the
  *                                  "work-in-progress" half
  *   Legal   emerald-700 / bold   — authoritative, the
  *                                  "signed and final" half
@@ -10,9 +10,10 @@
  * binding (green, final). Same component used in the sidebar, login
  * page, invite page — anywhere the brand needs to render.
  *
- * `kind="full"` shows "draftLegal"; `kind="mark"` shows just "dL"
+ * `kind="full"` shows "CRESCO Legal"; `kind="mark"` shows just "CL"
  * for the collapsed sidebar.
  */
+import { APP_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 
 type Size = 'sm' | 'md' | 'lg' | 'xl' | '2xl'
@@ -34,17 +35,17 @@ export function Wordmark({
   kind?:      'full' | 'mark'
   className?: string
 }) {
-  const draft = kind === 'full' ? 'draft' : 'd'
+  const cresco = kind === 'full' ? 'CRESCO' : 'C'
   const legal = kind === 'full' ? 'Legal' : 'L'
   return (
     <span
       className={cn('inline-flex tracking-tight select-none', SIZE[size], className)}
-      aria-label="draftLegal"
+      aria-label={APP_NAME}
     >
       {/* Weight contrast (medium → bold) reinforces "tentative → committed".
           Slate-700 reads as ink-on-paper graphite; emerald-700 carries the
           authority. Together: "drafts become legally binding". */}
-      <span className="font-medium text-slate-700">{draft}</span>
+      <span className="font-medium text-slate-700">{cresco}</span>
       <span className="font-bold text-emerald-700">{legal}</span>
     </span>
   )

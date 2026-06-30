@@ -3,7 +3,8 @@ import { NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
-import { Wordmark } from '@/components/brand/Wordmark'
+import { AppLogo } from '@/components/brand/AppLogo'
+import { APP_NAME } from '@/lib/brand'
 import {
   LayoutDashboard,
   FileText,
@@ -220,12 +221,12 @@ export function Sidebar() {
         <NavLink
           to="/dashboard"
           data-testid="logo-home-link"
-          aria-label="draftLegal — go to dashboard"
-          title="draftLegal — Dashboard"
+          aria-label={`${APP_NAME} — go to dashboard`}
+          title={`${APP_NAME} — Dashboard`}
           className="hover:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-emerald-500/40 rounded"
         >
-          <span className={showMark}><Wordmark size="xl" kind="mark" /></span>
-          <span className={showLabel}><Wordmark size="2xl" kind="full" /></span>
+          <span className={showMark}><AppLogo variant="mark" /></span>
+          <span className={showLabel}><AppLogo variant="full" className="h-8 max-w-[180px]" /></span>
         </NavLink>
       </div>
 

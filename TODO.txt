@@ -1,0 +1,36 @@
+TODO
+- /terms is empty
+- /privacy is empty
+
+
+
+
+
+
+Push new code
+1. cd /var/www/draft-legal
+2. pull latest code from git 
+    = git pull
+    
+3. rebuild the web app 
+    = pnpm --filter web build 
+
+4. Point nginx at the new build 
+    = sudo nginx -t && sudo systemctl reload nginx
+
+5. Restart API + agents (pick up any backend changes)
+    = pm2 restart draft-legal-api draft-legal-agents --update-env
+    = pm2 save
+
+6. Quick smoke test
+    = curl -sS http://127.0.0.1:8080/health
+    = curl -sS http://127.0.0.1:8081/health
+
+7. one-liner
+cd /var/www/draft-legal && \
+git pull && \
+pnpm install && \
+pnpm --filter web build && \
+pm2 restart draft-legal-api draft-legal-agents --update-env && \
+pm2 save && \
+sudo nginx -t && sudo systemctl reload nginx
