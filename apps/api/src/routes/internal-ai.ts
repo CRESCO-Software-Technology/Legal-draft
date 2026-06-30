@@ -15,7 +15,7 @@
  */
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { resolveLlm, NoProviderAvailable, type Tier } from '../lib/aiRouter.js'
+import { resolveLlm, resolveProviderModel, NoProviderAvailable, type Tier } from '../lib/aiRouter.js'
 import { prisma } from '../lib/prisma.js'
 import { resolveApprover, checkAutoApprove, type WorkflowStepDef } from '../lib/workflow-engine.js'
 import { generateDocument } from '../lib/template-engine.js'
@@ -154,6 +154,13 @@ function ruleCountOf(rules: PlaybookRules | null): number {
 const ResolveSchema = z.object({
   orgId: z.string().min(1),
   tier:  z.enum(TIERS as [Tier, ...Tier[]]),
+})
+
+// Per-request UI selection — resolve key for an explicit provider/model.
+const ResolveRequestSchema = z.object({
+  orgId:    z.string().min(1),
+  provider: z.string().min(1),
+  model:    z.string().min(1),
 })
 
 // D.1.4a/b — shape of agent tool inputs. orgId is enforced at this boundary
@@ -537,6 +544,35 @@ export async function internalAiRoutes(app: FastifyInstance) {
     const secret = req.headers['x-internal-secret']
     if (!secret || secret !== process.env.INTERNAL_SERVICE_SECRET) {
       return reply.status(401).send({ detail: 'Internal endpoint — bad secret' })
+    }
+  })
+
+  // ── POST /internal/ai/resolve-request ─────────────────────────────────────
+  // Body:  { orgId, provider, model } — per-request UI provider pick
+  // Returns: { provider, model, apiKey, source, tier: 'default' }
+  app.post('/resolve-request', async (req, reply) => {
+    let body
+    try {
+      body = ResolveRequestSchema.parse(req.body)
+    } catch (err) {
+      return reply.status(400).send({
+        detail: 'Invalid request',
+        issues: (err as { issues?: unknown }).issues ?? String(err),
+      })
+    }
+    try {
+      const resolved = await resolveProviderModel(body.orgId, body.provider, body.model)
+      return reply.send(resolved)
+    } catch (err) {
+      if (err instanceof NoProviderAvailable) {
+        return reply.status(503).send({
+          detail: err.message,
+          tier: err.tier,
+          attempted: err.attempted,
+        })
+      }
+      app.log.error({ err }, 'aiRouter resolve-request failed')
+      return reply.status(500).send({ detail: 'Internal error' })
     }
   })
 

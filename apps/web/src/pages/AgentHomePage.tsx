@@ -593,8 +593,9 @@ export function AgentHomePage() {
             } else if (evt.type === 'error') {
               throw new Error(evt.error || 'agent error')
             }
-          } catch {
-            // ignore parse errors
+          } catch (e) {
+            if (e instanceof SyntaxError) continue
+            throw e
           }
         }
       }

@@ -678,8 +678,13 @@ export function SideAgentRail() {
                 }))
               }
             } catch (e) {
-              // One malformed frame shouldn't tank the stream; log + continue.
-              if (process.env.NODE_ENV !== 'production') console.warn('[rail] bad SSE frame', line, e)
+              // Malformed JSON frames shouldn't tank the stream; agent errors must
+              // propagate so the user sees OpenAI/quota failures instead of a blank bubble.
+              if (e instanceof SyntaxError) {
+                if (process.env.NODE_ENV !== 'production') console.warn('[rail] bad SSE frame', line, e)
+                continue
+              }
+              throw e
             }
           }
         }

@@ -21,8 +21,9 @@ from typing import AsyncIterator, TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from app.memory import get_session_history, append_to_session
+from app.config import settings, active_provider, active_model
 from app.providers import build_llm
-from app.config import active_provider, active_model
+from app.router import resolve_llm_for_request
 from app.tools import get_read_tools
 
 logger = logging.getLogger(__name__)
@@ -509,7 +510,16 @@ async def run_agent_chat_stream(
     # Anthropic / OpenAI tool-binding both work via `bind_tools` on the
     # LangChain wrapper. Disable streaming on this instance — we drive the
     # stream manually so tool events can be interleaved cleanly.
-    llm = build_llm(provider, model_id, streaming=False).bind_tools(tools)
+    # Per-request provider from the UI: resolve org BYOK / platform key via
+    # Node so OPENAI_API_KEY in agents env is not required when the org
+    # configured a key in Organization → AI Config.
+    resolved = await resolve_llm_for_request(
+        org_id, provider, model_id, streaming=False,
+        trace_name="agent.chat", user_id=user_id,
+        thread_id=session_id,
+    )
+    llm = resolved.llm.bind_tools(tools)
+    invoke_config = {"callbacks": resolved.callbacks}
 
     # Build the conversation. The page context gets prepended to the human
     # message so the model knows which contractId to feed into contract_get.
@@ -598,7 +608,7 @@ async def run_agent_chat_stream(
     turn_tool_results: list = []
     try:
         for iteration in range(MAX_TOOL_ITERATIONS):
-            ai: AIMessage = await llm.ainvoke(messages)
+            ai: AIMessage = await llm.ainvoke(messages, config=invoke_config)
             tool_calls = getattr(ai, "tool_calls", None) or []
 
             # Terminal branch: no more tool calls → stream the answer.
@@ -804,7 +814,7 @@ async def run_agent_chat_stream(
                 "concrete next step."
             )))
             try:
-                synth: AIMessage = await llm.ainvoke(messages)
+                synth: AIMessage = await llm.ainvoke(messages, config=invoke_config)
                 final_text = synth.content if isinstance(synth.content, str) else str(synth.content)
                 if final_text.strip():
                     words = final_text.split(" ")

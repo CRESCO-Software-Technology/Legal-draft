@@ -198,6 +198,30 @@ export async function resolveLlm(orgId: string, tier: Tier): Promise<ResolvedLlm
   throw new NoProviderAvailable(tier, candidates)
 }
 
+/**
+ * Resolve an explicit (provider, model) pair for a per-request UI selection.
+ *
+ * Unlike resolveLlm(tier), this honours the caller's provider + model and
+ * only resolves which API key to use (BYOK → platform). Used by the hero
+ * agent / side rail when the user (or UI) picks openai/gpt-4.1-mini, etc.
+ */
+export async function resolveProviderModel(
+  orgId: string,
+  provider: string,
+  model: string,
+): Promise<ResolvedLlm> {
+  const byokKey = await getByokKey(orgId, provider)
+  if (byokKey) {
+    return { provider, model, apiKey: byokKey, source: 'byok', tier: 'default' }
+  }
+  const platKey = platformKey(provider)
+  if (platKey) {
+    await assertCostCapNotExceeded(orgId)
+    return { provider, model, apiKey: platKey, source: 'platform', tier: 'default' }
+  }
+  throw new NoProviderAvailable('default', [{ provider, model }])
+}
+
 // ─── Startup configuration check ─────────────────────────────────────────────
 
 /**
@@ -236,4 +260,5 @@ export const __internal = {
   platformKey,
   getOrgOverride,
   getByokKey,
+  resolveProviderModel,
 }

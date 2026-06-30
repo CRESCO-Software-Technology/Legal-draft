@@ -188,6 +188,86 @@ async def _resolve_via_node(
     )
 
 
+async def resolve_llm_for_request(
+    org_id: str,
+    provider: str,
+    model: str,
+    streaming: bool = True,
+    *,
+    trace_name: str = "agent.chat",
+    user_id: str | None = None,
+    thread_id: str | None = None,
+    tool_name: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> ResolvedLlm:
+    """
+    Resolve a LangChain LLM for an explicit per-request (provider, model)
+    selection from the UI.
+
+    Asks Node for the org's BYOK or platform key for that provider, then
+    builds the model with the caller's chosen model id (not a tier default).
+    Falls back to platform env keys when Node is unreachable.
+    """
+    if org_id and org_id != "default" and settings.api_url and settings.internal_service_secret:
+        try:
+            return await _resolve_request_via_node(
+                org_id, provider, model, streaming,
+                trace_name=trace_name, user_id=user_id,
+                thread_id=thread_id, tool_name=tool_name,
+                extra_metadata=extra_metadata,
+            )
+        except Exception as e:
+            import logging
+            logging.warning(
+                "[router] Node resolve-request failed for org=%s provider=%s model=%s — falling back to platform env. Error: %s",
+                org_id, provider, model, e,
+            )
+
+    key = _platform_key(provider)
+    if not key:
+        raise RuntimeError(
+            f"No API key for provider={provider}. "
+            f"Set {provider.upper()}_API_KEY in apps/agents env or add a BYOK key in Organization → AI Config."
+        )
+    return _build_resolved(
+        provider=provider, model=model, api_key=key,
+        source="platform", tier="default", streaming=streaming,
+        trace_name=trace_name, org_id=org_id, user_id=user_id,
+        thread_id=thread_id, tool_name=tool_name,
+        extra_metadata=extra_metadata,
+    )
+
+
+async def _resolve_request_via_node(
+    org_id: str,
+    provider: str,
+    model: str,
+    streaming: bool,
+    *,
+    trace_name: str,
+    user_id: str | None,
+    thread_id: str | None,
+    tool_name: str | None,
+    extra_metadata: dict[str, Any] | None,
+) -> ResolvedLlm:
+    """Internal — call Node's POST /api/internal/ai/resolve-request."""
+    url = f"{settings.api_url.rstrip('/')}/api/internal/ai/resolve-request"
+    headers = {"x-internal-secret": settings.internal_service_secret}
+    body = {"orgId": org_id, "provider": provider, "model": model}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+        r = await client.post(url, json=body, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+    return _build_resolved(
+        provider=data["provider"], model=data["model"],
+        api_key=data["apiKey"], source=data["source"],
+        tier="default", streaming=streaming,
+        trace_name=trace_name, org_id=org_id, user_id=user_id,
+        thread_id=thread_id, tool_name=tool_name,
+        extra_metadata=extra_metadata,
+    )
+
+
 def _build_resolved(
     *,
     provider: str, model: str, api_key: str, source: Source,

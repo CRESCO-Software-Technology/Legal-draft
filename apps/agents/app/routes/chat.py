@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.orchestrator import run_chat, run_agent_chat_stream
 from app.providers import list_models, DEFAULT_PROVIDER, DEFAULT_MODEL, get_model_option
-from app.config import resolve_provider, model_for, is_provider_configured
+from app.config import resolve_provider, model_for, is_provider_configured, settings
 
 router = APIRouter()
 
@@ -58,13 +58,24 @@ async def chat(req: ChatRequest):
     # method", surfaced to users as an empty stream. Now we silently
     # swap to whichever provider IS configured (logs a warning so the
     # operator still sees the fallback).
-    resolved_provider = resolve_provider(req.provider)
-    if resolved_provider != req.provider:
-        # Caller requested an unconfigured provider — pick a sensible
-        # model id for the actual provider rather than passing through
-        # the (now wrong) one (e.g. claude-sonnet-4-6 → openai breaks).
-        req.model_id = model_for(resolved_provider, tier="smart")
-    req.provider = resolved_provider
+    #
+    # When org_id is present, skip env-only swapping — resolve_llm_for_request
+    # in the orchestrator resolves BYOK + platform keys via Node for the
+    # UI's explicit provider/model pick.
+    use_org_resolver = (
+        req.org_id
+        and req.org_id != "default"
+        and settings.api_url
+        and settings.internal_service_secret
+    )
+    if not use_org_resolver:
+        resolved_provider = resolve_provider(req.provider)
+        if resolved_provider != req.provider:
+            # Caller requested an unconfigured provider — pick a sensible
+            # model id for the actual provider rather than passing through
+            # the (now wrong) one (e.g. claude-sonnet-4-6 → openai breaks).
+            req.model_id = model_for(resolved_provider, tier="smart")
+        req.provider = resolved_provider
 
     # Validate provider + model before starting the stream
     try:
