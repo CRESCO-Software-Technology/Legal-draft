@@ -143,7 +143,7 @@ export function helpBlocks(): Record<string, unknown> {
     text: 'Usage: /contract search <query>',
     blocks: [
       { type: 'section', text: { type: 'mrkdwn',
-        text: `*${APP_NAME} commands*\n• \`/contract search <query>\` — find contracts by title or counterparty\n• \`/contract <query>\` — shorthand for search' } },
+        text: `*${APP_NAME} commands*\n• \`/contract search <query>\` — find contracts by title or counterparty\n• \`/contract <query>\` — shorthand for search` } },
     ],
   }
 }
