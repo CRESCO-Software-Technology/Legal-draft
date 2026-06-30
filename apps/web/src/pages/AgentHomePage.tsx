@@ -653,8 +653,11 @@ export function AgentHomePage() {
     } catch (e) {
       const msg = (e as Error).message
       const noKey = /api\s+key|authentication|RuntimeError/i.test(msg)
+      const quota = /insufficient_quota|exceeded your current quota|billing details|RateLimitError/i.test(msg)
       const friendly = noKey
         ? 'The AI assistant isn\'t configured for your workspace yet. An admin needs to add an OpenAI or Anthropic API key in Organization → AI Config.'
+        : quota
+          ? 'OpenAI rejected the request — your API key has no remaining quota or billing isn\'t active. Check usage and billing at platform.openai.com, then try again.'
         : 'Sorry, the AI assistant ran into a problem. Try again, or refresh if it persists.'
       setMessages(prev => prev.map(m =>
         m.id === assistantMsgId

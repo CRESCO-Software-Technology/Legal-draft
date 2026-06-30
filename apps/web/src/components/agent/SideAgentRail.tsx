@@ -748,9 +748,12 @@ export function SideAgentRail() {
       //   3. anything else → generic "temporarily unavailable"
       const raw = String(e?.message ?? 'Stream failed')
       const noKey = /no\s+llm\s+api\s+key|api\s+key|authentication\s+method|RuntimeError.*api/i.test(raw)
+      const quota = /insufficient_quota|exceeded your current quota|billing details|RateLimitError/i.test(raw)
       const transient = /upstream|502|503|504|fetch\s+failed|ECONNREFUSED/i.test(raw)
       const friendly = noKey
         ? 'The AI assistant isn\'t configured for your workspace yet. An admin needs to add an OpenAI or Anthropic API key in Organization → AI Config.'
+        : quota
+          ? 'OpenAI rejected the request — your API key has no remaining quota or billing isn\'t active. Check usage and billing at platform.openai.com, then try again.'
         : transient
           ? 'The AI assistant is temporarily unavailable — please try again in a moment.'
           : 'Sorry, the AI assistant ran into a problem. Try again, or refresh if it persists.'
