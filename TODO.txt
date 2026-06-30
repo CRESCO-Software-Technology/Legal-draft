@@ -31,6 +31,7 @@ cd /var/www/draft-legal && \
 git pull && \
 pnpm install && \
 pnpm --filter web build && \
+pnpm --filter marketing build \
 pm2 restart draft-legal-api draft-legal-agents --update-env && \
 pm2 save && \
 sudo nginx -t && sudo systemctl reload nginx
