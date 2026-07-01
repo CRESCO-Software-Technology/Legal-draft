@@ -197,7 +197,7 @@ async function handleSigningReminder(data: SigningReminderJob): Promise<void> {
   })
   if (!contract) return
 
-  const baseUrl = process.env.WEB_BASE_URL ?? 'http://localhost:5173'
+  const baseUrl = process.env.WEB_BASE_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:5173'
   // For SEQUENTIAL flows, only nudge the lowest-signOrder bucket of
   // still-pending signers — others aren't yet eligible to sign.
   const minOrder = sr.signOrder === 'SEQUENTIAL'

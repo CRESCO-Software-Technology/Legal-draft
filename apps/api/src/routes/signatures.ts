@@ -156,7 +156,7 @@ export async function signatureRoutes(app: FastifyInstance) {
         const sender = await prisma.user.findUnique({
           where: { id: userId }, select: { name: true },
         })
-        const baseUrl = process.env.WEB_BASE_URL ?? 'http://localhost:5173'
+        const baseUrl = process.env.WEB_BASE_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:5173'
         const minSignOrder = body.signOrder === 'SEQUENTIAL'
           ? Math.min(...fresh.signers.map(s => s.signOrder))
           : Infinity   // ANY → email everyone
