@@ -52,6 +52,7 @@ export async function contractRoutes(app: FastifyInstance) {
         OR: [
           { title: { contains: query.search, mode: 'insensitive' as const } },
           { counterpartyName: { contains: query.search, mode: 'insensitive' as const } },
+          { summary: { contains: query.search, mode: 'insensitive' as const } },
         ],
       })
     }

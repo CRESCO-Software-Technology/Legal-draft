@@ -209,13 +209,13 @@ export function ContractsPage() {
 
   // B.6.9 — Route choice.
   // Plain /contracts hits Postgres directly and is always correct for
-  // structural filters; /search/advanced routes to Elasticsearch for
-  // full-text + risk + clause-flag + jurisdiction queries. Use the
-  // plain route whenever no ES-only filter is active — that way deep
-  // links from Counterparties (counterpartyId) and Dashboard
-  // (expiryDateTo, status) don't miss rows because of ES staleness.
+  // structural filters + text search (title / counterparty / summary).
+  // /search/advanced routes to Elasticsearch only for ES-only facets
+  // (risk band, jurisdiction, clause flags). Text search alone used to
+  // force the ES path, which breaks on self-hosted deploys where ES is
+  // empty or unavailable — Matters/Requests/Counterparties all search
+  // Postgres and worked fine.
   const needsEs =
-    !!debouncedSearch ||
     !!filters.clauseFlags ||
     !!filters.riskBand ||
     !!filters.jurisdiction
@@ -226,12 +226,17 @@ export function ContractsPage() {
       if (needsEs) {
         return api.post('/search/advanced', buildQuery()).then(r => r.data)
       }
-      // Plain route — pass structural filters as GET params
+      // Plain route — pass structural filters + text search as GET params
       const params: Record<string, unknown> = { limit: 50 }
+      if (debouncedSearch) params.search = debouncedSearch
       if (filters.type) params.type = filters.type
       if (filters.status) params.status = filters.status
       if (filters.counterpartyId) params.counterpartyId = filters.counterpartyId
       if (filters.expiryDateTo) params.expiryDateTo = filters.expiryDateTo
+      if (filters.otdBand === 'below_target') params.otdMax = 95
+      if (filters.otdBand === 'meeting_target') params.otdMin = 95
+      if (filters.uptimeBand === 'three_nines') params.uptimeSlaMin = 99.0
+      if (filters.uptimeBand === 'four_nines') params.uptimeSlaMin = 99.99
       return api.get('/contracts', { params }).then(r => r.data)
     },
     // Poll every 5s while any contract in the list is being analyzed

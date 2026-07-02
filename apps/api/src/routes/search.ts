@@ -169,7 +169,44 @@ export async function searchRoutes(app: FastifyInstance) {
       }
 
       // Keyword / structured filter mode (ES)
-      const esResult = await advancedSearch(orgId, { q, ...filters }, limit)
+      let esResult: Awaited<ReturnType<typeof advancedSearch>>
+      let esUnavailable = false
+      try {
+        esResult = await advancedSearch(orgId, { q, ...filters }, limit)
+      } catch (err) {
+        app.log.warn({ err }, 'Elasticsearch unavailable for advanced search, falling back to DB')
+        esResult = { hits: [], total: 0 }
+        esUnavailable = true
+      }
+
+      // Self-hosted deploys often run without a populated ES index. When
+      // there's a keyword query, fall back to Postgres (same as POST /search).
+      if ((esResult.hits.length === 0 && q) || (esUnavailable && q)) {
+        const contracts = await prisma.contract.findMany({
+          where: {
+            orgId,
+            deletedAt: null,
+            diligenceRoomId: null,
+            OR: [
+              { title: { contains: q, mode: 'insensitive' } },
+              { counterpartyName: { contains: q, mode: 'insensitive' } },
+              { summary: { contains: q, mode: 'insensitive' } },
+            ],
+            ...(filters.status && { status: filters.status }),
+            ...(filters.type && { type: filters.type }),
+          },
+          include: { counterparty: { select: { id: true, name: true } } },
+          take: limit,
+          orderBy: { updatedAt: 'desc' },
+        })
+        return reply.send({
+          data: contracts,
+          highlights: {},
+          total: contracts.length,
+          source: 'postgres',
+        })
+      }
+
       const ids = esResult.hits.map(h => h.id!)
       const contracts = await prisma.contract.findMany({
         where: { id: { in: ids }, orgId, deletedAt: null },
