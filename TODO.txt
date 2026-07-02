@@ -1,9 +1,10 @@
 TODO
 - /terms is empty
 - /privacy is empty
-- use sendgrid for emails
+
 - https://contracts.cresco.org/contracts/cmqt4rjvm01wzq6dbmony1ooi > Actions > download = doesn't work
 - https://contracts.cresco.org/contracts = search doesn't work
+
 
 KEEP CHECKING: 
 https://github.com/AniketTati/draft-legal/blob/main/BUILD_TRACKER.md

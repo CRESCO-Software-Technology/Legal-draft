@@ -21,10 +21,15 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
-import { s3, S3_BUCKET } from '../lib/storage.js'
+import {
+  s3,
+  S3_BUCKET,
+  needsS3DownloadProxy,
+  getPresignedObjectUrl,
+  streamS3Object,
+} from '../lib/storage.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { AuditAction } from '@clm/types'
 import { buildCsv } from '../lib/csv.js'
@@ -335,13 +340,47 @@ export async function obligationRoutes(app: FastifyInstance) {
     if (!o) return reply.status(404).send({ detail: 'Obligation not found' })
     if (!o.evidenceS3Key) return reply.status(404).send({ detail: 'No evidence on this obligation' })
 
-    const url = await getSignedUrl(s3, new GetObjectCommand({
+    const filename = o.evidenceFilename ?? 'evidence'
+    const getCommand = new GetObjectCommand({
       Bucket: S3_BUCKET,
-      Key:    o.evidenceS3Key,
-      ResponseContentDisposition: `attachment; filename="${o.evidenceFilename ?? 'evidence'}"`,
-    }), { expiresIn: 600 })
+      Key: o.evidenceS3Key,
+      ResponseContentDisposition: `attachment; filename="${filename}"`,
+    })
 
-    return reply.send({ url, filename: o.evidenceFilename, mimeType: o.evidenceMimeType })
+    if (needsS3DownloadProxy()) {
+      return reply.send({
+        mode: 'proxy',
+        streamPath: `/obligations/${id}/evidence/stream`,
+        filename,
+        mimeType: o.evidenceMimeType,
+      })
+    }
+
+    const url = await getPresignedObjectUrl(getCommand, 600)
+
+    return reply.send({
+      mode: 'presigned',
+      url,
+      filename,
+      mimeType: o.evidenceMimeType,
+    })
+  })
+
+  app.get('/:id/evidence/stream', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { orgId } = req.user
+    const o = await prisma.obligation.findFirst({
+      where: { id, orgId },
+      select: { evidenceS3Key: true, evidenceFilename: true },
+    })
+    if (!o) return reply.status(404).send({ detail: 'Obligation not found' })
+    if (!o.evidenceS3Key) return reply.status(404).send({ detail: 'No evidence on this obligation' })
+
+    return streamS3Object(
+      new GetObjectCommand({ Bucket: S3_BUCKET, Key: o.evidenceS3Key }),
+      reply,
+      o.evidenceFilename ?? 'evidence',
+    )
   })
 
   // ── POST /:id/reopen — undo completion (admins/owners) ────────────────

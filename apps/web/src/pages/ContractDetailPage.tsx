@@ -802,29 +802,57 @@ export function ContractDetailPage() {
   })
   const downloadAttachment = async (idx: number, filename: string) => {
     const res = await api.get(`/contracts/${id}/attachments/${idx}/download`)
+    const data = res.data as { mode?: string; url?: string; streamPath?: string; filename?: string }
+    if (data.mode === 'proxy' && data.streamPath) {
+      const streamRes = await api.get(data.streamPath, { responseType: 'blob' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(streamRes.data)
+      a.download = data.filename ?? filename
+      a.click()
+      URL.revokeObjectURL(a.href)
+      return
+    }
     const a = document.createElement('a')
-    a.href = res.data.url
+    a.href = data.url!
     a.download = filename
     a.target = '_blank'
     a.click()
   }
 
-  // Note: askMutation + handleAsk used to drive an in-page Ask tab.
-  // U.4.4 moved that flow to the rail composer; both are now dead.
-  // Refer to git history for the original implementation.
+  const fetchContractFileUrl = async (versionId?: string) => {
+    const res = await api.get(`/contracts/${id}/download`, {
+      params: versionId ? { versionId } : undefined,
+    })
+    const data = res.data as { mode?: string; url?: string; streamPath?: string; filename?: string }
+    if (data.mode === 'proxy' && data.streamPath) {
+      const streamRes = await api.get(data.streamPath, { responseType: 'blob' })
+      return URL.createObjectURL(streamRes.data)
+    }
+    return data.url!
+  }
 
   const handleDownload = async (versionId?: string) => {
     const res = await api.get(`/contracts/${id}/download`, {
       params: versionId ? { versionId } : undefined,
     })
-    window.open(res.data.url, '_blank')
+    const data = res.data as { mode?: string; url?: string; streamPath?: string; filename?: string }
+    if (data.mode === 'proxy' && data.streamPath) {
+      const streamRes = await api.get(data.streamPath, { responseType: 'blob' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(streamRes.data)
+      a.download = data.filename ?? 'contract.pdf'
+      a.click()
+      URL.revokeObjectURL(a.href)
+      return
+    }
+    window.open(data.url!, '_blank')
   }
 
   const handleViewPdf = async () => {
     try {
       setPdfError(null)
-      const res = await api.get(`/contracts/${id}/download`)
-      setPdfUrl(res.data.url)
+      const url = await fetchContractFileUrl()
+      setPdfUrl(url)
       setTab('document')
     } catch {
       setPdfError('Could not load document. No file attached or storage unavailable.')

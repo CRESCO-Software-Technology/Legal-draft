@@ -1,10 +1,15 @@
 import type { FastifyInstance } from 'fastify'
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 // @ts-ignore — no type definitions for node-htmldiff
 import htmldiff from 'node-htmldiff'
 import { prisma } from '../lib/prisma.js'
-import { s3, S3_BUCKET } from '../lib/storage.js'
+import {
+  s3,
+  S3_BUCKET,
+  needsS3DownloadProxy,
+  getPresignedObjectUrl,
+  streamS3Object,
+} from '../lib/storage.js'
 import { renderHtmlToPdfAndStore } from '../lib/gotenberg.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { createAuditEvent } from '../lib/audit.js'
@@ -513,35 +518,35 @@ export async function contractRoutes(app: FastifyInstance) {
   //
   // Callers can pass ?artifact=source to explicitly force the source file
   // (useful for diff-against-original views). Default is canonical.
-  app.get('/:id/download', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
-    const { id } = req.params as { id: string }
-    const { versionId, artifact = 'canonical' } = req.query as {
-      versionId?: string
-      artifact?: 'canonical' | 'source'
-    }
-    const { orgId } = req.user
-
+  //
+  // When S3_ENDPOINT is loopback-only (typical self-hosted MinIO), presigned
+  // URLs would point at 127.0.0.1 and fail in the browser. In that case we
+  // return mode=proxy and stream the file through GET /:id/download/stream.
+  // Set S3_PUBLIC_ENDPOINT to a browser-reachable URL to use presigned URLs
+  // instead (e.g. an nginx proxy to MinIO).
+  async function resolveContractDownloadKey(
+    contractId: string,
+    orgId: string,
+    versionId: string | undefined,
+    artifact: 'canonical' | 'source',
+  ) {
     const contract = await prisma.contract.findFirst({
-      where: { id, orgId, deletedAt: null },
+      where: { id: contractId, orgId, deletedAt: null },
       include: { versions: { orderBy: { versionNumber: 'desc' }, take: 1 } },
     })
-
-    if (!contract) return reply.status(404).send({ detail: 'Contract not found' })
+    if (!contract) return null
 
     let version = versionId
-      ? await prisma.contractVersion.findFirst({ where: { id: versionId, contractId: id } })
+      ? await prisma.contractVersion.findFirst({ where: { id: versionId, contractId } })
       : contract.versions[0]
 
-    // Pick the artifact key: canonical = renderedPdfKey (if present) else s3Key.
     const canonicalKey = (v: typeof version) =>
       artifact === 'source' ? v?.s3Key : (v?.renderedPdfKey ?? v?.s3Key)
 
-    // If the selected version has no usable key, fall back to the most recent
-    // version that does.
     if (!canonicalKey(version) && !versionId) {
       version = await prisma.contractVersion.findFirst({
         where: {
-          contractId: id,
+          contractId,
           OR: artifact === 'source'
             ? [{ s3Key: { not: null } }]
             : [{ renderedPdfKey: { not: null } }, { s3Key: { not: null } }],
@@ -551,19 +556,67 @@ export async function contractRoutes(app: FastifyInstance) {
     }
 
     const key = canonicalKey(version)
-    if (!key) return reply.status(404).send({ detail: 'No file stored for this version' })
+    if (!key) return null
 
-    const url = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }),
-      { expiresIn: 3600 },
+    return {
+      key,
+      filename: key.split('/').pop() ?? 'download',
+      artifactType: artifact === 'source' ? 'source' as const : (version?.renderedPdfKey ? 'rendered' as const : 'source' as const),
+    }
+  }
+
+  app.get('/:id/download', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { versionId, artifact = 'canonical' } = req.query as {
+      versionId?: string
+      artifact?: 'canonical' | 'source'
+    }
+    const { orgId } = req.user
+
+    const resolved = await resolveContractDownloadKey(id, orgId, versionId, artifact)
+    if (!resolved) return reply.status(404).send({ detail: 'Contract not found or no file stored for this version' })
+
+    if (needsS3DownloadProxy()) {
+      const params = new URLSearchParams()
+      if (versionId) params.set('versionId', versionId)
+      if (artifact === 'source') params.set('artifact', 'source')
+      const qs = params.toString()
+      return reply.send({
+        mode: 'proxy',
+        streamPath: `/contracts/${id}/download/stream${qs ? `?${qs}` : ''}`,
+        artifact: resolved.artifactType,
+      })
+    }
+
+    const url = await getPresignedObjectUrl(
+      new GetObjectCommand({ Bucket: S3_BUCKET, Key: resolved.key }),
+      3600,
     )
 
     return reply.send({
+      mode: 'presigned',
       url,
       expiresIn: 3600,
-      artifact: artifact === 'source' ? 'source' : (version?.renderedPdfKey ? 'rendered' : 'source'),
+      artifact: resolved.artifactType,
     })
+  })
+
+  app.get('/:id/download/stream', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { versionId, artifact = 'canonical' } = req.query as {
+      versionId?: string
+      artifact?: 'canonical' | 'source'
+    }
+    const { orgId } = req.user
+
+    const resolved = await resolveContractDownloadKey(id, orgId, versionId, artifact)
+    if (!resolved) return reply.status(404).send({ detail: 'Contract not found or no file stored for this version' })
+
+    return streamS3Object(
+      new GetObjectCommand({ Bucket: S3_BUCKET, Key: resolved.key }),
+      reply,
+      resolved.filename,
+    )
   })
 
   // ── Versions ─────────────────────────────────────────────────────────────
@@ -1567,17 +1620,49 @@ export async function contractRoutes(app: FastifyInstance) {
     const attachment = current[idx]
     if (!attachment) return reply.status(404).send({ detail: 'Attachment not found' })
 
-    const url = await getSignedUrl(
-      s3,
+    const getCommand = new GetObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: attachment.s3Key,
+      ResponseContentDisposition: `attachment; filename="${attachment.filename}"`,
+    })
+
+    if (needsS3DownloadProxy()) {
+      return reply.send({
+        mode: 'proxy',
+        streamPath: `/contracts/${id}/attachments/${index}/download/stream`,
+        filename: attachment.filename,
+      })
+    }
+
+    const url = await getPresignedObjectUrl(getCommand, 300)
+
+    return reply.send({ mode: 'presigned', url, filename: attachment.filename })
+  })
+
+  app.get('/:id/attachments/:index/download/stream', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
+    const { id, index } = req.params as { id: string; index: string }
+    const { orgId } = req.user
+    const idx = parseInt(index, 10)
+
+    const existing = await prisma.contract.findFirst({
+      where: { id, orgId, deletedAt: null },
+      select: { attachments: true },
+    })
+    if (!existing) return reply.status(404).send({ detail: 'Contract not found' })
+
+    const current = (existing.attachments as any[]) ?? []
+    const attachment = current[idx]
+    if (!attachment) return reply.status(404).send({ detail: 'Attachment not found' })
+
+    return streamS3Object(
       new GetObjectCommand({
         Bucket: S3_BUCKET,
         Key: attachment.s3Key,
         ResponseContentDisposition: `attachment; filename="${attachment.filename}"`,
       }),
-      { expiresIn: 300 },
+      reply,
+      attachment.filename,
     )
-
-    return reply.send({ url, filename: attachment.filename })
   })
 
   // ── Binder split ──────────────────────────────────────────────────────────
