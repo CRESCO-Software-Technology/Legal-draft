@@ -25,6 +25,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # pnpm v9 does not run dependency postinstall scripts by default, so the
+      # Prisma client is never generated on install. apps/api's tsc needs the
+      # generated client's types, so generate it explicitly before typecheck.
+      - name: Generate Prisma client
+        run: pnpm --filter api db:generate
+
       - name: Typecheck all packages
         run: pnpm typecheck
 
@@ -83,6 +89,12 @@ jobs:
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
+
+      # pnpm v9 skips dependency postinstall scripts, so generate the Prisma
+      # client explicitly — the tests import @prisma/client at module load.
+      - name: Generate Prisma client
+        working-directory: apps/api
+        run: pnpm db:generate
 
       - name: Run DB migrations
         working-directory: apps/api
