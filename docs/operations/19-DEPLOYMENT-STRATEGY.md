@@ -1,5 +1,13 @@
 # 19 — Deployment Strategy
 
+> ⚠️ **ASPIRATIONAL / TARGET ARCHITECTURE — NOT YET IMPLEMENTED.**
+> This document describes a future EKS/Kubernetes multi-AZ deployment with
+> staging, canary rollouts, and managed observability. **None of it is built.**
+> The *actual* production deployment is single-region Google Cloud Run — see
+> [20-CLOUD-RUN-LAUNCH.md](./20-CLOUD-RUN-LAUNCH.md) for the real runbook.
+> Treat everything below as a roadmap, not a description of the current system.
+> (Flagged during the 2026-07 "make it real" audit.)
+
 ## Environments
 
 | Environment | Purpose | Infrastructure | Data | Deploy Trigger |

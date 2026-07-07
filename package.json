@@ -14,11 +14,7 @@
     "test": "pnpm -r test",
     "db:migrate": "pnpm --filter api db:migrate",
     "db:studio": "pnpm --filter api db:studio",
-    "db:seed": "pnpm --filter api db:seed",
-    "audit:features": "node scripts/feature-integrity/run.mjs",
-    "audit:features:json": "node scripts/feature-integrity/run.mjs --json",
-    "audit:features:probe": "node scripts/feature-integrity/run.mjs --only",
-    "audit:features:fast": "node scripts/feature-integrity/run.mjs --only P2,P4,P6,P8,P14,P16,P17,P18,P20,P21,P22,P2ui"
+    "db:seed": "pnpm --filter api db:seed"
   },
   "workspaces": [
     "apps/*",
@@ -37,7 +33,8 @@
       "tar": ">=7.4.3",
       "uuid": ">=14.0.0",
       "brace-expansion": ">=2.0.3",
-      "pdfjs-dist": ">=4.2.67"
+      "pdfjs-dist": ">=4.2.67",
+      "ioredis": "5.10.0"
     }
   }
 }

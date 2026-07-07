@@ -200,33 +200,52 @@ export async function resolveLlm(orgId: string, tier: Tier): Promise<ResolvedLlm
 
 // ─── Startup configuration check ─────────────────────────────────────────────
 
+// Set at boot by assertRouterConfigured(). When false, no platform key is
+// configured for the critical tiers and AI features should degrade (503)
+// rather than 500 — but the app still boots so auth / browse / upload /
+// manage all work keyless, matching the README's "boots with no API key".
+let _aiConfigured = false
+export function isAiConfigured(): boolean {
+  return _aiConfigured
+}
+
 /**
  * At server boot, log the resolved routing for each tier (using the platform
- * defaults — no org context). Refuses to boot if a critical tier (default,
- * fast) has no provider with a platform key.
+ * defaults — no org context).
  *
- * Non-critical tiers (rerank, vision_ocr) are allowed to be unconfigured —
- * features that need them will degrade gracefully or 503 on use.
+ * Wave 0.4 (2026-07): this used to THROW when a critical tier (default, fast)
+ * had no platform key, which crash-looped the API before the login screen and
+ * contradicted the README ("The app boots with no API key"). It now logs a
+ * loud warning and lets the app boot; AI features check isAiConfigured() and
+ * return 503 until a key is set. Orgs can still BYOK per-org at runtime.
  */
 export function assertRouterConfigured(): void {
   const critical: Tier[] = ['default', 'fast']
   const lines: string[] = []
+  const missingCritical: Tier[] = []
   for (const tier of Object.keys(PLATFORM_TIER_DEFAULTS) as Tier[]) {
     const candidates = PLATFORM_TIER_DEFAULTS[tier]
     const winner = candidates.find(c => platformKey(c.provider))
     if (winner) {
       lines.push(`  ${tier.padEnd(11)} → ${winner.provider}/${winner.model}`)
     } else if (critical.includes(tier)) {
-      throw new Error(
-        `[aiRouter] Critical tier "${tier}" has no platform key. ` +
-        `Tried: ${candidates.map(c => c.provider).join(', ')}. ` +
-        `Set at least one of OPENAI_API_KEY / ANTHROPIC_API_KEY in apps/api/.env.`
-      )
+      missingCritical.push(tier)
+      lines.push(`  ${tier.padEnd(11)} → (no platform key — AI disabled until a key is set)`)
     } else {
       lines.push(`  ${tier.padEnd(11)} → (no platform key — orgs must BYOK)`)
     }
   }
   console.info('[aiRouter] platform routing table:\n' + lines.join('\n'))
+  _aiConfigured = missingCritical.length === 0
+  if (!_aiConfigured) {
+    console.warn(
+      `[aiRouter] ⚠ No platform key for critical tier(s): ${missingCritical.join(', ')}. ` +
+      `The app boots and all non-AI features (auth, browse, upload, manage contracts) ` +
+      `work normally, but AI features return 503 until you set one of ` +
+      `GOOGLE_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY in apps/api/.env and restart. ` +
+      `See the README "Quickstart".`
+    )
+  }
 }
 
 // ─── Internal helpers exposed for the REST endpoint (D.0.4) + tests ─────────

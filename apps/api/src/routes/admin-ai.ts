@@ -167,7 +167,7 @@ export async function adminAiRoutes(app: FastifyInstance) {
     const byProvider = new Map(stored.map((k) => [k.provider, k]))
     const data = ALLOWED_PROVIDERS.map((provider) => {
       const k = byProvider.get(provider)
-      if (k) return { provider, configured: true, ...k }
+      if (k) return { ...k, configured: true }
       return { provider, configured: false, keyPrefix: null, isActive: false, lastTestedAt: null, testStatus: null, testError: null, createdAt: null, updatedAt: null }
     })
     return reply.send({ data })

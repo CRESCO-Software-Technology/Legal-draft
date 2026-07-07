@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
@@ -157,9 +158,9 @@ export async function requestRoutes(app: FastifyInstance) {
         orgId,
         requestedById,
         requestNumber,
-        metadata,
+        metadata: metadata as Prisma.InputJsonValue,
         attachments: attachments.length > 0 ? attachments : undefined,
-      },
+      } as Prisma.ContractRequestUncheckedCreateInput,
     })
 
     // Rename S3 key to use real request ID (for clean paths)
@@ -258,7 +259,7 @@ export async function requestRoutes(app: FastifyInstance) {
       requestDescription: (reqMeta.description as string) ?? request.title,
       contractType:      request.type,
       counterpartyName:  request.counterpartyName ?? undefined,
-      estimatedValue:    request.estimatedValue ?? undefined,
+      estimatedValue:    request.estimatedValue != null ? Number(request.estimatedValue) : undefined,
     } : undefined
 
     // Create the contract from request data
@@ -285,7 +286,9 @@ export async function requestRoutes(app: FastifyInstance) {
           versionNumber: 1,
           s3Key:         att.s3Key,
           mimeType:      att.mimeType,
-          filename:      att.filename,
+          createdById:   userId,
+          // ContractVersion has no `filename` column; the name travels
+          // with the parse job below and is derived from s3Key for display.
         },
       })
       queueParseDocument({

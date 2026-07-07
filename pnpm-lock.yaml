@@ -13,6 +13,7 @@ overrides:
   uuid: '>=14.0.0'
   brace-expansion: '>=2.0.3'
   pdfjs-dist: '>=4.2.67'
+  ioredis: 5.10.0
 
 importers:
 
@@ -24,6 +25,8 @@ importers:
       playwright:
         specifier: ^1.59.1
         version: 1.59.1
+
+  apps/agents: {}
 
   apps/api:
     dependencies:
@@ -79,7 +82,7 @@ importers:
         specifier: ^4.28.0
         version: 4.29.1
       ioredis:
-        specifier: ^5.4.1
+        specifier: 5.10.0
         version: 5.10.0
       jsonwebtoken:
         specifier: ^9.0.2
@@ -90,6 +93,9 @@ importers:
       node-htmldiff:
         specifier: ^0.9.4
         version: 0.9.4
+      nodemailer:
+        specifier: ^6.9.14
+        version: 6.10.1
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
@@ -118,6 +124,9 @@ importers:
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.37
+      '@types/nodemailer':
+        specifier: ^6.4.15
+        version: 6.4.24
       pino-pretty:
         specifier: ^11.3.0
         version: 11.3.0
@@ -1039,9 +1048,6 @@ packages:
     resolution: {integrity: sha512-79Dv+3mDF7i+2ajj7SkypSKHhl1cbln1OGavqrsF7p6mbUv11xpqpacPsGDCTRvCSjEEIez2ef1NveSVL3b0Ag==}
     peerDependencies:
       react-hook-form: ^7.0.0
-
-  '@ioredis/commands@1.5.0':
-    resolution: {integrity: sha512-eUgLqrMf8nJkZxT24JvVRrQya1vZkQh8BBeYNwGDqa5I0VUi8ACx7uFvAaLxintokpTenkK6DASvo/bvNbBGow==}
 
   '@ioredis/commands@1.5.1':
     resolution: {integrity: sha512-JH8ZL/ywcJyR9MmJ5BNqZllXNZQqQbnVZOqpPQqE1vHiFgAw4NHbvE0FOduNU8IX9babitBT46571OnPTT0Zcw==}
@@ -2469,6 +2475,9 @@ packages:
   '@types/node@24.12.0':
     resolution: {integrity: sha512-GYDxsZi3ChgmckRT9HPU0WEhKLP08ev/Yfcq2AstjrDASOYCSXeyjDsHg4v5t4jOj7cyDX3vmprafKlWIG9MXQ==}
 
+  '@types/nodemailer@6.4.24':
+    resolution: {integrity: sha512-Ww4u0rT9wQNXh4JiQaIwx3QWdcOFXzOjQA2zc+jtFYNmQiT4mIUqcDin51bDFdkzKubFnQCZNK7FIHlPKQ/q9w==}
+
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
 
@@ -3256,10 +3265,6 @@ packages:
     resolution: {integrity: sha512-HVBe9OFuqs+Z6n64q09PQvP1/R4Bm+30PAyyD4wIEqssh3v9L21QjCVk4kRLucMBcDokJTcLjsGeVRlq/nH6DA==}
     engines: {node: '>=12.22.0'}
 
-  ioredis@5.9.3:
-    resolution: {integrity: sha512-VI5tMCdeoxZWU5vjHWsiE/Su76JGhBvWF1MJnV9ZtGltHk9BmD48oDq8Tj8haZ85aceXZMxLNDQZRVo5QKNgXA==}
-    engines: {node: '>=12.22.0'}
-
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
@@ -3675,6 +3680,10 @@ packages:
 
   node-releases@2.0.36:
     resolution: {integrity: sha512-TdC8FSgHz8Mwtw9g5L4gR/Sh9XhSP/0DEkQxfEFXOpiul5IiHgHan2VhYYb6agDSfp4KuvltmGApc8HMgUrIkA==}
+
+  nodemailer@6.10.1:
+    resolution: {integrity: sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA==}
+    engines: {node: '>=6.0.0'}
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -5452,8 +5461,6 @@ snapshots:
     dependencies:
       react-hook-form: 7.71.2(react@18.3.1)
 
-  '@ioredis/commands@1.5.0': {}
-
   '@ioredis/commands@1.5.1': {}
 
   '@jridgewell/gen-mapping@0.3.13':
@@ -6973,6 +6980,10 @@ snapshots:
     dependencies:
       undici-types: 7.16.0
 
+  '@types/nodemailer@6.4.24':
+    dependencies:
+      '@types/node': 20.19.37
+
   '@types/prop-types@15.7.15': {}
 
   '@types/react-dom@18.3.7(@types/react@18.3.28)':
@@ -7192,7 +7203,7 @@ snapshots:
   bullmq@5.71.0:
     dependencies:
       cron-parser: 4.9.0
-      ioredis: 5.9.3
+      ioredis: 5.10.0
       msgpackr: 1.11.5
       node-abort-controller: 3.1.1
       semver: 7.7.4
@@ -7767,20 +7778,6 @@ snapshots:
   ioredis@5.10.0:
     dependencies:
       '@ioredis/commands': 1.5.1
-      cluster-key-slot: 1.1.2
-      debug: 4.4.3
-      denque: 2.1.0
-      lodash.defaults: 4.2.0
-      lodash.isarguments: 3.1.0
-      redis-errors: 1.2.0
-      redis-parser: 3.0.0
-      standard-as-callback: 2.1.0
-    transitivePeerDependencies:
-      - supports-color
-
-  ioredis@5.9.3:
-    dependencies:
-      '@ioredis/commands': 1.5.0
       cluster-key-slot: 1.1.2
       debug: 4.4.3
       denque: 2.1.0
@@ -8401,6 +8398,8 @@ snapshots:
   node-htmldiff@0.9.4: {}
 
   node-releases@2.0.36: {}
+
+  nodemailer@6.10.1: {}
 
   normalize-path@3.0.0: {}
 

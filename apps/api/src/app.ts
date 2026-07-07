@@ -1,4 +1,5 @@
 import Fastify from 'fastify'
+import type { FastifyRequest } from 'fastify'
 import pino from 'pino'
 import pinoPretty from 'pino-pretty'
 import cors from '@fastify/cors'
@@ -159,17 +160,27 @@ export async function buildApp() {
   // Global rate limit. Production: 1000/min/IP. Dev/test: 10× so the
   // 48-probe audit can run back-to-back without tripping the cap;
   // production behavior is unchanged.
-  await app.register(rateLimit, {
+  // `rateLimit as any`: @hocuspocus/server pulls a second Fastify (v5)
+  // copy alongside apps/api's v4, so @fastify/rate-limit's plugin
+  // signature type-mismatches the host FastifyInstance. Runtime is correct
+  // (v4 plugin + v4 instance); the cast sidesteps the dual-version type
+  // skew. `skip`'s req is typed explicitly to keep that callback safe.
+  await app.register(rateLimit as any, {
     redis,
     max: process.env.NODE_ENV === 'production' ? 1000 : 10_000,
     timeWindow: '1 minute',
-    keyGenerator: (req) =>
-      (req.headers['x-org-id'] as string) ?? req.ip,
+    // Wave 1.4 (2026-07): key the global limiter on the client IP, NOT
+    // the attacker-controlled `x-org-id` header. The header is only
+    // meaningful on internal-secret-authenticated calls; using it as the
+    // key let any unauthenticated caller rotate values for a fresh
+    // 1000/min bucket, defeating the cap on every public surface.
+    // (Default keyGenerator = req.ip.) Per-org authenticated limits, if
+    // needed, belong on a post-auth limiter that reads req.user.orgId.
     // Trusted-internal bypass: probes / scripts can pass the same
     // INTERNAL_SERVICE_SECRET we already use elsewhere to skip the
-    // global cap (the per-route limits — login, register, etc — still
-    // apply). Externally-issued requests can never set this.
-    skip: (req) => {
+    // global cap (the per-route limits — login, register — still apply).
+    // Externally-issued requests can never set this.
+    skip: (req: FastifyRequest) => {
       const s = req.headers['x-internal-secret']
       return !!s && s === process.env.INTERNAL_SERVICE_SECRET
     },
@@ -183,7 +194,10 @@ export async function buildApp() {
   const bullBoardAdapter = new FastifyAdapter()
   bullBoardAdapter.setBasePath('/admin/queues')
   createBullBoard({
-    queues: [new BullMQAdapter(documentQueue), new BullMQAdapter(agentQueue), new BullMQAdapter(notificationQueue), new BullMQAdapter(scanQueue), new BullMQAdapter(webhookQueue)],
+    // @bull-board v5 + bullmq v5 have benign generic-type friction on the
+    // BullMQAdapter → BaseAdapter assignment; the imports are already
+    // untyped (@ts-ignore above). Runtime is correct.
+    queues: [new BullMQAdapter(documentQueue), new BullMQAdapter(agentQueue), new BullMQAdapter(notificationQueue), new BullMQAdapter(scanQueue), new BullMQAdapter(webhookQueue)] as any,
     serverAdapter: bullBoardAdapter,
   })
   app.addHook('onRequest', async (req, reply) => {

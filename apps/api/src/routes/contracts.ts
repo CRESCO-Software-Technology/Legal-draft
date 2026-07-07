@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 // @ts-ignore — no type definitions for node-htmldiff
@@ -310,7 +311,7 @@ export async function contractRoutes(app: FastifyInstance) {
     // starting…" forever. Default to DONE so the row is immediately
     // usable; uploads override this back to PENDING (see /upload).
     const contract = await prisma.contract.create({
-      data: { ...body, orgId, ownerId, analysisStatus: body.analysisStatus ?? 'DONE' },
+      data: { ...body, orgId, ownerId, analysisStatus: 'DONE' } as Prisma.ContractUncheckedCreateInput,
     })
 
     // P81 audit (2026-05-02). Index every fresh contract into ES so
@@ -909,7 +910,7 @@ export async function contractRoutes(app: FastifyInstance) {
     // Use the contract's real orgId (internal calls come in with orgId='system')
     const effectiveOrgId = existing.orgId
 
-    const updated = await prisma.contract.update({ where: { id }, data: body })
+    const updated = await prisma.contract.update({ where: { id }, data: body as Prisma.ContractUncheckedUpdateInput })
 
     // Re-index if searchable fields changed
     if (body.title || body.status || body.counterpartyName || body.tags) {
@@ -973,7 +974,7 @@ export async function contractRoutes(app: FastifyInstance) {
         requestDescription: (draftCtx?.requestDescription as string) ?? contract.title,
         contractType:      (draftCtx?.contractType as string) ?? contract.type,
         counterpartyName:  (draftCtx?.counterpartyName as string) ?? contract.counterpartyName ?? undefined,
-        estimatedValue:    (draftCtx?.estimatedValue as number) ?? (contract.value as number) ?? undefined,
+        estimatedValue:    (draftCtx?.estimatedValue as number) ?? (contract.value != null ? Number(contract.value) : undefined),
       })
       return reply.send({ status: 'queued', contractId: id, analysisStatus: 'DRAFTING', mode: 'draft' })
     }

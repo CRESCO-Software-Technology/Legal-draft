@@ -84,7 +84,7 @@ async function extractPdf(buffer: Buffer): Promise<ExtractResult> {
   const agentsUrl = process.env.AGENTS_URL ?? 'http://localhost:8000'
   try {
     const form = new FormData()
-    form.append('file', new Blob([buffer], { type: 'application/pdf' }), 'contract.pdf')
+    form.append('file', new Blob([new Uint8Array(buffer)], { type: 'application/pdf' }), 'contract.pdf')
     const res = await fetch(`${agentsUrl}/extract`, {
       method: 'POST',
       body: form,

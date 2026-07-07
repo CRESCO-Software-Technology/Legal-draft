@@ -1750,7 +1750,7 @@ export async function internalAiRoutes(app: FastifyInstance) {
           const byId = new Map<string, { passed: boolean; evidence?: string }>()
           for (const v of judged.mustHave ?? []) byId.set(v.id, { passed: v.passed, evidence: v.evidence })
           for (const v of judged.mustNot ?? [])  byId.set(v.id, { passed: v.passed, evidence: v.evidence })
-          const boundsByKey = new Map<string, typeof judged.bounds[number]>()
+          const boundsByKey = new Map<string, NonNullable<typeof judged.bounds>[number]>()
           for (const b of judged.bounds ?? []) boundsByKey.set(b.key, b)
 
           const merged = (ck.violations as Array<Record<string, unknown>>).map(v => {
@@ -2084,13 +2084,14 @@ export async function internalAiRoutes(app: FastifyInstance) {
 
     if (body.action === 'assign_owner') {
       const nextOwnerId = body.payload.ownerId == null ? null : String(body.payload.ownerId)
-      if (nextOwnerId) {
-        const user = await prisma.user.findFirst({
-          where: { id: nextOwnerId, orgId: body.orgId, deletedAt: null },
-          select: { id: true },
-        })
-        if (!user) return reply.status(404).send({ detail: 'User not found in this org' })
-      }
+      // Contract.ownerId is non-nullable — an owner is required. Reject an
+      // unassign attempt rather than violating the DB constraint.
+      if (!nextOwnerId) return reply.status(400).send({ detail: 'ownerId is required for assign_owner' })
+      const user = await prisma.user.findFirst({
+        where: { id: nextOwnerId, orgId: body.orgId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!user) return reply.status(404).send({ detail: 'User not found in this org' })
       await prisma.contract.update({
         where: { id: existing.id },
         data:  { ownerId: nextOwnerId },

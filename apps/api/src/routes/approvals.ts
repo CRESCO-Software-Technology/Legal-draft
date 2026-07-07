@@ -280,6 +280,9 @@ export async function approvalRoutes(app: FastifyInstance) {
     try { await notificationQueue.remove(`escalate-${stepId}`) } catch { /* no-op */ }
 
     if (decision === 'DELEGATED') {
+      // Guarded at entry (line ~261), but TS doesn't carry that narrowing
+      // into this separate block — assert delegateTo is present.
+      if (!delegateTo) return reply.status(400).send({ error: 'delegateTo is required when delegating' })
       // Mark current step DELEGATED, create new PENDING step for delegatee
       const delegatee = await prisma.user.findFirst({ where: { id: delegateTo, orgId } })
       if (!delegatee) return reply.status(400).send({ error: 'Delegatee user not found in this org' })

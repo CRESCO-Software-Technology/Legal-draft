@@ -26,6 +26,7 @@
  * the org with `FOR UPDATE`. Cost: one extra row read per event.
  */
 import crypto from 'node:crypto'
+import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import type { AuditAction } from '@clm/types'
 
@@ -121,7 +122,7 @@ export async function createAuditEvent(params: AuditParams): Promise<void> {
             action: params.action,
             resourceType: params.resourceType,
             resourceId: params.resourceId,
-            metadata: params.metadata ?? {},
+            metadata: (params.metadata ?? {}) as Prisma.InputJsonValue,
             ipAddress: params.ipAddress,
             userAgent: params.userAgent,
             prevHash: prev?.hash ?? null,

@@ -49,7 +49,6 @@ function makeClient() {
   // In development we keep Prisma's default raw SQL output (more
   // useful when debugging an actual query).
   if (process.env.NODE_ENV !== 'development') {
-    // @ts-expect-error — Prisma's event types narrow by level
     client.$on('query', (e: { query: string; params: string; duration: number; target: string }) => {
       if (e.duration >= SLOW_QUERY_MS) {
         log.warn({
@@ -60,11 +59,9 @@ function makeClient() {
         }, `slow query (${e.duration}ms)`)
       }
     })
-    // @ts-expect-error — Prisma event payload is loosely typed
     client.$on('error', (e: { message: string; target: string }) => {
       log.error({ prisma: true, target: e.target }, e.message)
     })
-    // @ts-expect-error — Prisma event payload is loosely typed
     client.$on('warn', (e: { message: string; target: string }) => {
       log.warn({ prisma: true, target: e.target }, e.message)
     })
