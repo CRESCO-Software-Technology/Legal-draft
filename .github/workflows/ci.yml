@@ -8,7 +8,7 @@ on:
 
 jobs:
   typecheck-and-lint:
-    name: Typecheck (Node)
+    name: Typecheck + lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,11 @@ jobs:
 
       - name: Typecheck all packages
         run: pnpm typecheck
+
+      # Wave 5 — real lint (eslint was referenced but never installed). Lean
+      # high-signal ruleset; fails only on errors, warnings are allowed.
+      - name: Lint
+        run: pnpm lint
 
   bundle-size:
     # Production audit (2026-04-30): web bundle ballooned to 833KB

@@ -21,8 +21,13 @@
     "packages/*"
   ],
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "axe-core": "^4.11.4",
-    "playwright": "^1.59.1"
+    "eslint": "9",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
+    "playwright": "^1.59.1",
+    "typescript-eslint": "^8.63.0"
   },
   "pnpm": {
     "overrides": {
