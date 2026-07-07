@@ -63,12 +63,29 @@ ANTHROPIC_API_KEY=anthropic-key:latest,\
 OPENAI_API_KEY=openai-key:latest,\
 GOOGLE_API_KEY=google-key:latest"
 
+# Wave 4 — apply pending Prisma migrations BEFORE any service that reads the
+# new schema goes live. Requires reachability to the database (Cloud SQL public
+# IP + authorized network, or run from inside the VPC / via the Cloud SQL Auth
+# Proxy). The DB URL comes from Secret Manager, never from a committed file.
+migrate_db() {
+  echo "--- prisma migrate deploy ---"
+  local db_url
+  db_url="$(gcloud secrets versions access latest --secret=database-url --project="${GCP_PROJECT}")"
+  [[ -n "${db_url}" ]] || { echo "could not read database-url secret" >&2; exit 1; }
+  ( cd "${ROOT}/apps/api" && DATABASE_URL="${db_url}" pnpm exec prisma migrate deploy )
+}
+
 deploy_api() {
   echo "--- deploy api-service ---"
   [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; exit 1; }
   # The repo root has a symlink `Dockerfile -> apps/api/Dockerfile` because
   # the API build context is the repo root (pnpm workspace), and newer gcloud
   # no longer accepts an explicit --dockerfile flag.
+  #
+  # WORKERS_ENABLED=false — the dedicated worker-service (deploy_workers) runs
+  # the BullMQ workers on an always-on instance, so the scale-to-zero API must
+  # NOT also consume jobs. GOTENBERG_REQUIRE_AUTH=true — the API sends an OIDC
+  # token to the now-private Gotenberg service.
   gcloud run deploy api-service \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
@@ -79,8 +96,33 @@ deploy_api() {
     --timeout 300 \
     --port 8080 \
     --env-vars-file "${ROOT}/env.api.yaml" \
+    --set-env-vars "WORKERS_ENABLED=false,GOTENBERG_REQUIRE_AUTH=true" \
     --set-secrets "${API_SECRETS}" \
     --allow-unauthenticated
+}
+
+# Wave 4 — dedicated always-on worker service. Same image/source as the API but
+# runs worker-entrypoint.ts instead of the Fastify app, with --min-instances 1
+# + --no-cpu-throttling so time-based jobs (approval escalation, signature
+# reminders, renewal scans) actually fire. Not publicly invocable.
+deploy_workers() {
+  echo "--- deploy worker-service (always-on BullMQ workers) ---"
+  [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; exit 1; }
+  gcloud run deploy worker-service \
+    --project "${GCP_PROJECT}" \
+    --region "${GCP_REGION}" \
+    --source "${ROOT}" \
+    --service-account "${API_SA}" \
+    --command "node" \
+    --args "--import,tsx,src/worker-entrypoint.ts" \
+    --min-instances 1 --max-instances 1 \
+    --no-cpu-throttling \
+    --memory 1Gi --cpu 1 \
+    --timeout 300 \
+    --port 8080 \
+    --env-vars-file "${ROOT}/env.api.yaml" \
+    --set-secrets "${API_SECRETS}" \
+    --no-allow-unauthenticated
 }
 
 deploy_agents() {
@@ -105,7 +147,7 @@ deploy_agents() {
 }
 
 deploy_gotenberg() {
-  echo "--- deploy gotenberg ---"
+  echo "--- deploy gotenberg (private) ---"
   gcloud run deploy gotenberg \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
@@ -114,10 +156,15 @@ deploy_gotenberg() {
     --memory 512Mi --cpu 1 \
     --port 3000 \
     --args "gotenberg,--api-port=3000" \
-    --allow-unauthenticated
-  # NOTE: gotenberg has no built-in auth and the API does not fetch OIDC
-  # tokens before calling it. The service is exposed publicly but bounded
-  # by --max-instances=1, so abuse capacity is capped.
+    --no-allow-unauthenticated
+  # Wave 4 — Gotenberg has no built-in auth, so it is kept PRIVATE and only the
+  # API's runtime SA may invoke it, sending an OIDC token (the API runs with
+  # GOTENBERG_REQUIRE_AUTH=true). This closes the "public + unauthenticated
+  # renderer" hole. Grant the invoker role idempotently.
+  gcloud run services add-iam-policy-binding gotenberg \
+    --project "${GCP_PROJECT}" --region "${GCP_REGION}" \
+    --member "serviceAccount:${API_SA}" \
+    --role "roles/run.invoker" --quiet
 }
 
 deploy_web() {
@@ -138,20 +185,24 @@ deploy_marketing() {
 }
 
 case "${cmd}" in
+  migrate)    migrate_db ;;
   api)        deploy_api ;;
   agents)     deploy_agents ;;
   gotenberg)  deploy_gotenberg ;;
+  workers)    deploy_workers ;;
   web)        deploy_web ;;
   marketing)  deploy_marketing ;;
   all)
+    migrate_db          # apply schema changes before any service reads them
     deploy_gotenberg
     deploy_agents
     deploy_api
+    deploy_workers      # always-on jobs (escalation, reminders, scans)
     deploy_web
     deploy_marketing
     ;;
   *)
-    echo "Usage: $0 {all|api|agents|gotenberg|web|marketing}" >&2
+    echo "Usage: $0 {all|migrate|api|agents|gotenberg|workers|web|marketing}" >&2
     exit 1
     ;;
 esac

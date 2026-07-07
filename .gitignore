@@ -12,6 +12,7 @@ out/
 .env
 .env.*
 !.env.example
+!.env.selfhost.example
 
 # Cloud Run env-vars files are tracked. They contain only non-secret
 # config (URLs, feature flags). Real secrets come from Google Secret

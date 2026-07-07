@@ -204,6 +204,6 @@ jobs:
             echo ""
             echo "**Next steps:**"
             echo "1. Read the failed smoke job's logs for the specific failure."
-            echo "2. Fix the underlying bug on \`feature/library-data\` (or a hotfix branch)."
+            echo "2. Fix the underlying bug on \`main\` (or a hotfix branch)."
             echo "3. Push the fix and re-deploy."
           } >> "$GITHUB_STEP_SUMMARY"

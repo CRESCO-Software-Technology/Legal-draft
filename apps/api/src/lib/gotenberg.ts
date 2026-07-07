@@ -12,6 +12,36 @@ import { s3, S3_BUCKET } from './storage.js'
 
 const GOTENBERG_URL = process.env.GOTENBERG_URL ?? 'http://localhost:3002'
 
+// Wave 4 — when Gotenberg is deployed privately on Cloud Run (recommended;
+// it has no built-in auth), service-to-service calls must carry an OIDC
+// identity token whose audience is the Gotenberg URL. We fetch it from the
+// Cloud Run metadata server and cache it (~1h TTL). Enabled by setting
+// GOTENBERG_REQUIRE_AUTH=true on the API service in prod; off in local dev.
+let _idTokenCache: { token: string; exp: number } | null = null
+
+async function gotenbergAuthHeaders(): Promise<Record<string, string>> {
+  if (process.env.GOTENBERG_REQUIRE_AUTH !== 'true') return {}
+  const now = Date.now()
+  if (_idTokenCache && _idTokenCache.exp > now + 60_000) {
+    return { Authorization: `Bearer ${_idTokenCache.token}` }
+  }
+  const metaUrl =
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity'
+    + `?audience=${encodeURIComponent(GOTENBERG_URL)}`
+  const res = await fetch(metaUrl, { headers: { 'Metadata-Flavor': 'Google' } })
+  if (!res.ok) {
+    throw new Error(`Gotenberg OIDC token fetch failed (${res.status}) — the API must run on Cloud Run with a service account for private Gotenberg calls.`)
+  }
+  const token = (await res.text()).trim()
+  let exp = now + 50 * 60_000 // default 50 min if the JWT can't be parsed
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
+    if (payload.exp) exp = payload.exp * 1000
+  } catch { /* keep default TTL */ }
+  _idTokenCache = { token, exp }
+  return { Authorization: `Bearer ${token}` }
+}
+
 const DEFAULT_STYLES = `
   body { font-family: Georgia, serif; font-size: 12pt; line-height: 1.6; margin: 2.5cm; color: #1a1a1a; }
   h1 { font-size: 18pt; margin-top: 1.2em; } h2 { font-size: 14pt; } h3 { font-size: 12pt; }
@@ -58,8 +88,9 @@ export async function renderHtmlToPdfAndStore({
   formData.append('files', new Blob([fullHtml], { type: 'text/html' }), 'index.html')
 
   const upstream = await fetch(`${GOTENBERG_URL}/forms/chromium/convert/html`, {
-    method: 'POST',
-    body:   formData,
+    method:  'POST',
+    headers: await gotenbergAuthHeaders(),
+    body:    formData,
   })
 
   if (!upstream.ok) {
