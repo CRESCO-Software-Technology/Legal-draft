@@ -76,7 +76,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://clm:clm@localhost:5432/clm_test
       REDIS_URL: redis://localhost:6379
-      JWT_SECRET: test-secret-for-ci-only
+      JWT_SECRET: ci-integration-jwt-secret-32chars-minimum
+      PORTAL_JWT_SECRET: ci-integration-portal-secret-32chars-min
+      INTERNAL_SERVICE_SECRET: ci-integration-internal-secret
       NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
@@ -100,9 +102,16 @@ jobs:
         working-directory: apps/api
         run: pnpm db:migrate:prod
 
-      - name: Run API tests
+      - name: Run API tests (unit)
         working-directory: apps/api
         run: pnpm test
+
+      # Integration suite — boots the real Fastify app against the Postgres +
+      # Redis service containers and exercises routes via app.inject()
+      # (cross-org isolation, RBAC, approval state machine). Wave 5.
+      - name: Run API tests (integration)
+        working-directory: apps/api
+        run: pnpm test:integration
 
   test-agents:
     name: Test Agents (Python)
