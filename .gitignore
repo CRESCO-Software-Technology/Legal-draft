@@ -88,3 +88,4 @@ apps/*/.vite/
 
 # Wave 1.1 — dev-only generated JWT/portal secrets (never commit)
 .dev-secrets.json
+.dev-signing-cert.p12
