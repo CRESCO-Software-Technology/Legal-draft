@@ -4,6 +4,7 @@
  * Test mode: paste a clause → agent scores it against playbook.
  */
 import { useState, useEffect } from 'react'
+import { sanitizeHtml } from '@/lib/sanitize'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Shield, Plus, Edit2, Trash2, Loader2,
@@ -55,7 +56,7 @@ function PositionCard({
       {position.content && (
         <div
           className="text-sm text-gray-700 mt-2 prose prose-sm max-w-none line-clamp-4"
-          dangerouslySetInnerHTML={{ __html: position.content }}
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(position.content) }}
         />
       )}
       {position.notes && (
