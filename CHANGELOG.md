@@ -11,10 +11,11 @@ the entry for their target version before upgrading (see
 `docs/operations/SELF-HOSTING.md`); upgrades apply forward Prisma migrations
 automatically and never reset data.
 
-## [Unreleased] — "Make it real" (Waves 0–4)
+## [Unreleased] — "Make it real" (Waves 0–5)
 
-The program that took the app from demo-shaped to runnable, secure, honest, and
-deployable. CI is green on GitHub Actions for the first time.
+The program that took the app from demo-shaped to runnable, secure, honest,
+deployable, and regression-guarded. CI is green on GitHub Actions for the first
+time, and now gates merges.
 
 ### Added
 - **Real features:** per-change redline accept/reject, playbook comparison,
@@ -27,6 +28,10 @@ deployable. CI is green on GitHub Actions for the first time.
   service; private Gotenberg with OIDC; Linux OCR (tesseract); pgvector HNSW
   ANN index; secure self-host stack (`docker-compose.selfhost.yml`) + runbook;
   web bundle-size CI gate.
+- **Regression net (Wave 5):** integration suite that boots the real app against
+  Postgres+Redis and exercises routes (cross-org isolation, RBAC per role,
+  approval state machine); index-on-create source tripwire; real ESLint
+  (installed + green). CI runs typecheck + lint + unit + integration on every PR.
 
 ### Fixed
 - **Security (fail-closed):** JWT/portal secrets at boot, API-key scope→perm
@@ -47,6 +52,7 @@ deployable. CI is green on GitHub Actions for the first time.
 - After restoring from backup, rebuild the ES index:
   `pnpm --filter api backfill-es-index`.
 
-### Still ahead (Wave 5)
-- Integration test suite (cross-org isolation, RBAC, approval state machine,
-  signature flow, index-on-create) as a required merge gate; real lint.
+### Operator action
+- Make CI a **required** status check on `main` (branch protection) so red PRs
+  can't merge — the checks are green and ready to gate. See
+  `docs/operations/SELF-HOSTING.md` §Release process / the PR description.
