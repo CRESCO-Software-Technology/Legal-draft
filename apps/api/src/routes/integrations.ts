@@ -34,6 +34,13 @@ import { requirePermission } from '../middleware/permissions.js'
 import { hashApiKey, API_KEY_PREFIX } from '../middleware/auth.js'
 import { queueWebhookDelivery } from '../lib/queue.js'
 import { isTeamsUrl } from '../lib/teams-formatter.js'
+import { VALID_API_SCOPES } from '../lib/permissions.js'
+import { isUrlShapeAllowed } from '../lib/ssrf-guard.js'
+
+// Wave 1.5 — reject webhook URLs that target private/localhost/metadata hosts
+// (only enforced when the SSRF guard is active; self-host/dev pass through).
+const publicUrl = (schema: z.ZodString) =>
+  schema.refine(isUrlShapeAllowed, 'Webhook URL must be a public http(s) endpoint')
 
 // Canonical list of events a webhook can subscribe to. Keep stable —
 // these are part of the public API contract.
@@ -58,13 +65,18 @@ export const WEBHOOK_EVENTS = [
 
 const CreateApiKeySchema = z.object({
   name:       z.string().min(1).max(100),
-  scopes:     z.array(z.string()).optional(),
+  // Wave 1.2 — scopes must be a subset of the known vocabulary. An empty/
+  // omitted list grants NO permissions (no more accidental org-admin key).
+  scopes:     z.array(z.string()).optional().refine(
+    (arr) => !arr || arr.every((s) => VALID_API_SCOPES.includes(s)),
+    { message: `scopes must be a subset of: ${VALID_API_SCOPES.join(', ')}` },
+  ),
   expiresInDays: z.number().int().min(1).max(3650).optional(),
 })
 
 const CreateWebhookSchema = z.object({
   name:    z.string().min(1).max(100),
-  url:     z.string().url().max(2000),
+  url:     publicUrl(z.string().url().max(2000)),
   events:  z.array(z.string()).min(1),
   enabled: z.boolean().optional(),
   type:    z.enum(['generic', 'slack', 'teams']).optional(),
@@ -72,7 +84,7 @@ const CreateWebhookSchema = z.object({
 
 const PatchWebhookSchema = z.object({
   name:    z.string().min(1).max(100).optional(),
-  url:     z.string().url().max(2000).optional(),
+  url:     publicUrl(z.string().url().max(2000)).optional(),
   events:  z.array(z.string()).min(1).optional(),
   enabled: z.boolean().optional(),
 })

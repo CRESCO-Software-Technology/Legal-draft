@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireAuth } from '../middleware/auth.js'
+// Wave 1.7 — AI-consuming endpoints are gated on view:contract so a scopeless
+// public-API key (or a non-contract principal) can't burn the org's LLM
+// budget. Per-turn cost enforcement is tightened separately in Wave 3.
+import { requirePermission } from '../middleware/permissions.js'
 import { ChatMessageSchema } from '@clm/types'
 import { prisma } from '../lib/prisma.js'
 import { queueClassifyDocument } from '../lib/queue.js'
@@ -31,7 +35,7 @@ export async function agentRoutes(app: FastifyInstance) {
   })
 
   // POST /api/v1/agent/chat — proxy to Python agent service with SSE streaming
-  app.post('/chat', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/chat', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const body = ChatMessageSchema.parse(req.body)
     const { sub: userId, orgId } = req.user
 
@@ -179,7 +183,7 @@ export async function agentRoutes(app: FastifyInstance) {
   })
 
   // POST /api/v1/agent/draft — AI draft generation → saves as ContractVersion
-  app.post('/draft', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/draft', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const { orgId, sub: userId } = req.user
     const body = req.body as {
       userMessage: string
@@ -305,7 +309,7 @@ export async function agentRoutes(app: FastifyInstance) {
   // Pipes the Python NDJSON stream straight through to the browser so
   // the bubble popover can render tokens as they arrive. No buffering,
   // no JSON-parse — just raw bytes forwarded.
-  app.post('/assist-stream', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/assist-stream', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const body = (req.body ?? {}) as {
       selectedText?: string
       action?:       string
@@ -350,7 +354,7 @@ export async function agentRoutes(app: FastifyInstance) {
   // POST /api/v1/agent/classify-clause — P6.2 background classifier.
   // Fires per-paragraph from the editor. Low-latency fast-tier upstream.
   // Rate-limited by the per-paragraph hash cache on the client.
-  app.post('/classify-clause', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/classify-clause', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const body = (req.body ?? {}) as {
       clauseText?:   string
       contractType?: string
@@ -382,7 +386,7 @@ export async function agentRoutes(app: FastifyInstance) {
   // straight to the Python fast-tier /complete. Abort-friendly — the
   // client cancels in-flight requests on new keystrokes so we must
   // not do any heavy work here beyond the upstream fetch.
-  app.post('/complete', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/complete', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const body = (req.body ?? {}) as {
       contextBefore?: string
       contextAfter?:  string
@@ -412,7 +416,7 @@ export async function agentRoutes(app: FastifyInstance) {
   })
 
   // POST /api/v1/agent/assist — inline AI text improvement for editor
-  app.post('/assist', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/assist', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const body = AssistSchema.parse(req.body)
 
     const upstream = await fetch(`${AGENTS_URL}/assist`, {
@@ -439,7 +443,7 @@ export async function agentRoutes(app: FastifyInstance) {
   })
 
   // POST /api/v1/agent/compare — compare clause text to playbook positions
-  app.post('/compare', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/compare', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const { clauseText, clauseCategoryId, contractType } = req.body as {
       clauseText: string

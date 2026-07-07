@@ -248,7 +248,11 @@ export function checkAutoApprove(
   const rules = (triggerRules.autoApproveRules as Array<{ contractType: string; maxValue: number }>) ?? []
   for (const rule of rules) {
     const typeMatch = rule.contractType === 'ANY' || rule.contractType === contractType
-    const valueMatch = contractValue == null || contractValue <= rule.maxValue
+    // Wave 1.6 — fail CLOSED on unknown value. Previously `contractValue == null
+    // || contractValue <= rule.maxValue` meant a contract with no value matched
+    // ANY threshold and auto-approved — an editor could clear the value to skip
+    // human approval entirely. An unknown value must route to human review.
+    const valueMatch = contractValue != null && contractValue <= rule.maxValue
     if (typeMatch && valueMatch) return true
   }
   return false

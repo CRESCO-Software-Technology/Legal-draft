@@ -386,6 +386,29 @@ export async function contractRoutes(app: FastifyInstance) {
 
     if (!fileBuffer) return reply.status(400).send({ detail: 'No file uploaded' })
 
+    // Wave 1.8 — validate the upload by MAGIC BYTES, not the client-declared
+    // mimetype (which is spoofable). A user could otherwise store HTML/SVG/
+    // executables as a "contract" and have the download endpoint serve them
+    // back with an attacker-chosen Content-Type (content-confusion / stored
+    // XSS). We sniff the real type and use it; text/plain is allowed only when
+    // no binary signature is present. Everything else is rejected.
+    const detectBinaryType = (b: Buffer): string | null => {
+      if (b.subarray(0, 4).toString('latin1') === '%PDF') return 'application/pdf'
+      if (b.subarray(0, 4).toString('hex') === '504b0304') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' // DOCX (zip)
+      if (b.subarray(0, 8).toString('hex') === 'd0cf11e0a1b11ae1') return 'application/msword' // legacy DOC (OLE)
+      return null
+    }
+    const detected = detectBinaryType(fileBuffer)
+    if (detected) {
+      mimeType = detected // trust the bytes, not the client
+    } else if ((mimeType === 'text/plain' || mimeType === '') && fileBuffer.length > 0) {
+      mimeType = 'text/plain'
+    } else {
+      return reply.status(415).send({
+        detail: 'Unsupported or mismatched file type. Allowed: PDF, DOCX, DOC, TXT.',
+      })
+    }
+
     // Clean filename → readable title
     const cleanFilename = filename
       .replace(/\.[^.]+$/, '')

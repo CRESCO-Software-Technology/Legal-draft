@@ -59,6 +59,7 @@ import { marketingRoutes } from './routes/marketing.js'
 import { slackRoutes } from './routes/slack.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { assertRouterConfigured } from './lib/aiRouter.js'
+import { assertSecretsConfigured } from './lib/secrets.js'
 
 function devLogger() {
   const stream = pinoPretty({ colorize: true })
@@ -269,8 +270,14 @@ export async function buildApp() {
   // by the org's Slack signing secret rather than a user JWT).
   await app.register(slackRoutes,          { prefix: '/api/v1/slack' })
 
-  // D.0.3 — log the platform routing table at boot; throws if a critical
-  // tier (default, fast) has no platform key set.
+  // Wave 1.1 — fail closed at boot if JWT_SECRET / PORTAL_JWT_SECRET are
+  // missing or a known-insecure placeholder in production (no more silent
+  // hardcoded-secret fallback). In dev, generates + persists a local secret.
+  assertSecretsConfigured()
+
+  // D.0.3 — log the platform routing table at boot. Wave 0.4: warns (no
+  // longer throws) when a critical tier has no platform key, so the app
+  // boots keyless and AI features 503-degrade.
   assertRouterConfigured()
 
   // Elasticsearch index bootstrap (non-blocking — ES may not be running locally)

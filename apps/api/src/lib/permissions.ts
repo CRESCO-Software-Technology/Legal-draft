@@ -109,6 +109,44 @@ export const DEFAULT_ROLE_DESCRIPTIONS: Record<string, string> = {
   [SystemRole.VIEWER]: 'Read-only access — view contracts, templates, and clauses',
 }
 
+// ─── API-key scopes → permissions (Wave 1.2, 2026-07) ───────────────────────
+// Public-API keys carry `scopes` (strings), NOT role names. Before this,
+// middleware/auth.ts did `roles: key.scopes.length ? key.scopes : ['ADMIN']`,
+// which meant: an empty-scope key silently became org ADMIN, and a scoped key's
+// strings were looked up as role names → resolved to nothing → every call 403'd.
+// Now each scope maps to a concrete permission set, an empty scope list grants
+// NOTHING, and unknown scopes are rejected at key creation (integrations.ts).
+export const API_SCOPE_PERMISSIONS: Record<string, Permission[]> = {
+  'contracts:read':   [p(A.VIEW, R.CONTRACT), p(A.VIEW, R.TEMPLATE), p(A.VIEW, R.CLAUSE)],
+  'contracts:write':  [p(A.VIEW, R.CONTRACT), p(A.CREATE, R.CONTRACT), p(A.EDIT, R.CONTRACT)],
+  'contracts:delete': [p(A.DELETE, R.CONTRACT)],
+  'contracts:sign':   [p(A.SIGN, R.CONTRACT)],
+  'contracts:export': [p(A.EXPORT, R.CONTRACT)],
+  'requests:read':    [p(A.VIEW, R.REQUEST)],
+  'requests:write':   [p(A.VIEW, R.REQUEST), p(A.CREATE, R.REQUEST), p(A.EDIT, R.REQUEST)],
+  'templates:read':   [p(A.VIEW, R.TEMPLATE)],
+  'templates:write':  [p(A.VIEW, R.TEMPLATE), p(A.CREATE, R.TEMPLATE), p(A.EDIT, R.TEMPLATE)],
+  'reports:read':     [p(A.VIEW, R.REPORT)],
+  // Explicit full access — opt-in only. Empty scopes no longer grant this.
+  'admin':            [p('*', '*', S.ORG)],
+}
+
+/** Scope strings a public-API key is allowed to request (validated at creation). */
+export const VALID_API_SCOPES: string[] = Object.keys(API_SCOPE_PERMISSIONS)
+
+/**
+ * Resolve an API key's scope strings into a merged permission set.
+ * Unknown scopes contribute nothing; an empty list yields no permissions.
+ */
+export function resolveApiScopePermissions(scopes: string[]): Permission[] {
+  const merged: Permission[] = []
+  for (const scope of scopes) {
+    const perms = API_SCOPE_PERMISSIONS[scope]
+    if (perms) merged.push(...perms)
+  }
+  return merged
+}
+
 // ─── Permission Evaluator ────────────────────────────────────────────────────
 
 /**
