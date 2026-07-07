@@ -15,6 +15,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:generate": "prisma generate",
+    "backfill-es-index": "tsx --env-file=../../.env scripts/backfill-es-index.ts",
     "cleanup-broken-drafts": "tsx scripts/cleanup-broken-drafts.ts",
     "clean-demo": "tsx scripts/clean-demo.ts",
     "backfill-unnamed-titles": "tsx scripts/backfill-unnamed-titles.ts"

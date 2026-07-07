@@ -8,7 +8,8 @@ import { requirePermission } from '../middleware/permissions.js'
 import { ChatMessageSchema } from '@clm/types'
 import { prisma } from '../lib/prisma.js'
 import { queueClassifyDocument } from '../lib/queue.js'
-import { assertCostCapNotExceeded, CostCapExceededError } from '../lib/costCap.js'
+import { indexContract } from '../lib/elasticsearch.js'
+import { assertCostCapNotExceeded, recordCost, estimateCostUsd, CostCapExceededError } from '../lib/costCap.js'
 
 const AGENTS_URL = process.env.AGENTS_URL ?? 'http://localhost:8000'
 const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET ?? ''
@@ -40,10 +41,11 @@ export async function agentRoutes(app: FastifyInstance) {
     const { sub: userId, orgId } = req.user
 
     // P23 production audit (2026-04-29). Block before we proxy so a
-    // cap-busted org doesn't burn another LLM round-trip. The Python
-    // agent service has its own per-call cost recording on the back
-    // end; this gate at the front end is the immediate-feedback layer
-    // that returns a clean 429 before any provider call fires.
+    // cap-busted org doesn't burn another LLM round-trip. This gate reads the
+    // same Redis counter that recordCost() writes. Wave 3.6 — the chat path now
+    // records its own spend after the stream completes (see the finally block
+    // below); previously it read the counter but never wrote it, so chat could
+    // blow past the daily cap indefinitely.
     try {
       await assertCostCapNotExceeded(orgId)
     } catch (e) {
@@ -160,6 +162,10 @@ export async function agentRoutes(app: FastifyInstance) {
     // process exit). Both the writer call and the upstream cancel
     // need to be safe against a closed socket.
     let clientGone = false
+    // Wave 3.6 — track response size so we can record spend against the daily
+    // cap. Includes SSE/JSON framing, so this biases the estimate slightly HIGH
+    // — the safe direction for a budget guard.
+    let streamedChars = 0
     reply.raw.on('close', () => {
       clientGone = true
       try { reader.cancel() } catch { /* */ }
@@ -169,8 +175,10 @@ export async function agentRoutes(app: FastifyInstance) {
         if (clientGone) break
         const { done, value } = await reader.read()
         if (done) break
+        const text = decoder.decode(value)
+        streamedChars += text.length
         if (!reply.raw.writableEnded) {
-          try { reply.raw.write(decoder.decode(value)) } catch { break }
+          try { reply.raw.write(text) } catch { break }
         }
       }
     } catch (err) {
@@ -179,6 +187,11 @@ export async function agentRoutes(app: FastifyInstance) {
       if (!reply.raw.writableEnded) {
         try { reply.raw.end() } catch { /* */ }
       }
+      // Record chat spend to the same counter the 429 gate reads. Estimate on
+      // input + output size, mirroring the compliance/obligation/renewal paths.
+      // Fire-and-forget — a Redis failure must not affect the already-sent reply.
+      recordCost(orgId, estimateCostUsd(body.message.length + streamedChars))
+        .catch(e => app.log.warn({ err: e }, '[costCap] recordCost(agent_chat) failed'))
     }
   })
 
@@ -292,6 +305,18 @@ export async function agentRoutes(app: FastifyInstance) {
               include: { versions: true },
             })
             result.contractId = contract.id
+            // Wave 3.2 — index so the AI-drafted contract is searchable. We have
+            // the real plainText here, so index it directly (a later classify →
+            // chunk-and-index will refresh it). Fire-and-forget.
+            indexContract(contract.id, {
+              orgId,
+              title:     contract.title,
+              type:      contract.type,
+              status:    contract.status,
+              plainText,
+              tags:      contract.tags,
+              createdAt: contract.createdAt.toISOString(),
+            }).catch(err => app.log.warn({ err }, 'ES index on legacy draft save failed'))
             if (plainText && contract.versions[0]) {
               queueClassifyDocument({ contractId: contract.id, versionId: contract.versions[0].id, orgId })
             }

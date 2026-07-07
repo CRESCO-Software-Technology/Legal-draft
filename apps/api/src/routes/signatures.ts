@@ -148,10 +148,9 @@ export async function signatureRoutes(app: FastifyInstance) {
       })
 
       // Send the signing link email to each signer. For SEQUENTIAL flows
-      // we only email the first-bucket signer initially — others get
-      // notified after their predecessors sign (see /sign/:token/sign
-      // completion handler — TODO when reminders + sequential email
-      // chain land in step 8).
+      // we only email the first-bucket signer initially — later buckets get
+      // notified as their predecessors finish, in the /sign/:token/sign
+      // completion handler (Wave 3.7).
       if (fresh) {
         const orgRow = await prisma.organization.findUnique({
           where: { id: orgId }, select: { name: true },
@@ -610,6 +609,49 @@ export async function signatureRoutes(app: FastifyInstance) {
             }
           }
         })().catch(() => { /* swallow */ })
+      } else if (sr.signOrder === 'SEQUENTIAL') {
+        // Wave 3.7 — sequential flow, not everyone has signed yet. If this
+        // signature just unblocked a later signOrder bucket, email those signers
+        // now instead of making them wait for a T-3d/T-1d reminder job. Mirrors
+        // the initial-send loop and the reminder worker's bucket selection.
+        const pending = fresh!.signers.filter(s => s.status === 'PENDING')
+        if (pending.length > 0) {
+          const minOrder = Math.min(...pending.map(s => s.signOrder))
+          // Only notify when this sign advanced the sequence to a NEW bucket —
+          // guards against re-emailing parallel siblings still pending in the
+          // current signer's own bucket (they were emailed when that bucket
+          // opened).
+          if (minOrder > signer.signOrder) {
+            const nextBucket = pending.filter(s => s.signOrder === minOrder)
+            const cMeta = await prisma.contract.findUnique({
+              where: { id: sr.contractId },
+              select: { title: true, type: true, org: { select: { name: true } } },
+            })
+            const sender = await prisma.user.findUnique({
+              where: { id: sr.createdById }, select: { name: true },
+            })
+            const baseUrl = process.env.WEB_BASE_URL ?? 'http://localhost:5173'
+            for (const s of nextBucket) {
+              sendSigningEmailForSigner({
+                signer: s,
+                baseUrl,
+                senderName: sender?.name ?? null,
+                orgName: cMeta?.org?.name ?? 'draftLegal',
+                contractTitle: cMeta?.title ?? 'Contract',
+                contractType: cMeta?.type ?? '',
+                message: sr.message,
+                expiresAt: sr.expiresAt,
+              })
+            }
+            await prisma.signatureEvent.create({
+              data: {
+                signatureRequestId: sr.id,
+                kind: 'SENT',
+                metadata: { sequentialAdvance: true, notified: nextBucket.length, signOrder: minOrder },
+              },
+            }).catch(() => { /* audit best-effort */ })
+          }
+        }
       }
 
       return reply.send({

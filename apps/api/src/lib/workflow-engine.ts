@@ -15,12 +15,60 @@ import { AuditAction } from '@clm/types'
 export interface WorkflowStepDef {
   order:            number
   name:             string
-  approverId?:      string   // specific user
-  roleRequired?:    string   // fallback: first org user with matching role
+  approverId?:      string   // specific user (singular — legacy / sequential)
+  roleRequired?:    string   // fallback: org user(s) with matching role
+  // Wave 3.8 — plural approvers so a `parallel` step can name the full set of
+  // concurrent approvers. Both are optional and additive; singular fields still
+  // work for existing stored definitions.
+  approverIds?:     string[] // specific users (parallel)
+  roleRequireds?:   string[] // roles → all matching org users (parallel)
   executionMode:    'sequential' | 'parallel'
   requiredApprovals: number  // for parallel: how many of N must approve (1 = any-one)
   dueSoonHours:     number   // default 48 — used to set escalateAt
   escalateTo?:      string   // userId to reassign to on timeout
+}
+
+// ─── Pure decision helper (Wave 3.8) ─────────────────────────────────────────
+// Given the ApprovalStep rows at the current stepOrder, decide whether the
+// batch is rejected, resolved (approved), and which PENDING siblings should be
+// closed. Pure + exported so the parallel N-of-M semantics are unit-testable
+// without a database. Semantics:
+//   • any REJECTED at this order → the whole workflow fails (anyRejected).
+//   • parallel: resolved as soon as `requiredApprovals` APPROVE (short-circuit);
+//     requiredApprovals is clamped to [1, number of steps] so it can't be
+//     unsatisfiable. Remaining PENDING siblings are returned to be SKIPPED.
+//   • sequential: resolved when the single approver APPROVED and none pending.
+
+export function evaluateApprovalBatch(
+  steps: Array<{ id: string; status: string; decision: string | null }>,
+  executionMode: 'sequential' | 'parallel',
+  requiredApprovals: number,
+): { anyRejected: boolean; batchResolved: boolean; leftoverPendingIds: string[] } {
+  const anyRejected = steps.some(s => s.decision === 'REJECTED')
+  const approvedCount = steps.filter(s => s.decision === 'APPROVED').length
+  const pendingCount = steps.filter(s => s.status === 'PENDING').length
+
+  // Clamp requiredApprovals so an over-configured parallel step can't deadlock.
+  // The ceiling is the number of steps that can still yield an approval
+  // (already-approved + still-pending) — NOT steps.length: delegation and
+  // escalation ADD terminal DELEGATED/ESCALATED rows at the same order without
+  // freeing the slot they replaced, so steps.length overcounts and would let
+  // the ceiling drift back up to an unsatisfiable value, stranding the batch.
+  const approvableCount = approvedCount + pendingCount
+  const req = Math.min(
+    Math.max(1, requiredApprovals),
+    executionMode === 'parallel' && approvableCount > 0 ? approvableCount : Infinity,
+  )
+
+  const batchResolved = executionMode === 'parallel'
+    ? approvedCount >= req
+    : approvedCount >= 1 && pendingCount === 0
+
+  const leftoverPendingIds = (batchResolved && !anyRejected)
+    ? steps.filter(s => s.status === 'PENDING').map(s => s.id)
+    : []
+
+  return { anyRejected, batchResolved, leftoverPendingIds }
 }
 
 // ─── Helper: cancel escalation job ────────────────────────────────────────────
@@ -34,44 +82,53 @@ async function cancelEscalation(stepId: string): Promise<void> {
 }
 
 // ─── Helper: create ApprovalStep rows for a step definition ──────────────────
+// Wave 3.8 — creates ONE ApprovalStep per resolved approver at the same
+// stepOrder. For a sequential step that's a single row; for a parallel step
+// it's the whole concurrent set, which is what makes N-of-M approvals possible.
 
 async function createStepsForDef(
   prisma: PrismaClient,
   instanceId: string,
   orgId: string,
   stepDef: WorkflowStepDef,
-  resolvedApproverId: string,
-): Promise<string> {
-  const escalateAt = new Date(Date.now() + stepDef.dueSoonHours * 60 * 60 * 1000)
+  resolvedApproverIds: string[],
+): Promise<string[]> {
+  const dueSoonHours = stepDef.dueSoonHours ?? 48
+  const escalateAt = new Date(Date.now() + dueSoonHours * 60 * 60 * 1000)
+  const delayMs = dueSoonHours * 60 * 60 * 1000
 
-  const step = await prisma.approvalStep.create({
-    data: {
-      approvalInstanceId: instanceId,
+  const stepIds: string[] = []
+  for (const approverId of resolvedApproverIds) {
+    const step = await prisma.approvalStep.create({
+      data: {
+        approvalInstanceId: instanceId,
+        orgId,
+        stepOrder:  stepDef.order,
+        stepName:   stepDef.name,
+        approverId,
+        status:     'PENDING',
+        escalateAt,
+      },
+    })
+
+    // Queue escalation delayed job (one per concurrent approver)
+    const job = await queueEscalation({
+      instanceId,
+      stepId:     step.id,
       orgId,
-      stepOrder:  stepDef.order,
-      stepName:   stepDef.name,
-      approverId: resolvedApproverId,
-      status:     'PENDING',
-      escalateAt,
-    },
-  })
+      escalateTo: stepDef.escalateTo,
+    }, delayMs)
 
-  // Queue escalation delayed job
-  const delayMs = stepDef.dueSoonHours * 60 * 60 * 1000
-  const job = await queueEscalation({
-    instanceId,
-    stepId:     step.id,
-    orgId,
-    escalateTo: stepDef.escalateTo,
-  }, delayMs)
+    // Store job ID on the step so we can cancel it on decision
+    await prisma.approvalStep.update({
+      where: { id: step.id },
+      data:  { escalationJobId: job.id?.toString() },
+    })
 
-  // Store job ID on the step so we can cancel it on decision
-  await prisma.approvalStep.update({
-    where: { id: step.id },
-    data:  { escalationJobId: job.id?.toString() },
-  })
+    stepIds.push(step.id)
+  }
 
-  return step.id
+  return stepIds
 }
 
 // ─── Main engine: advanceWorkflow ─────────────────────────────────────────────
@@ -94,9 +151,14 @@ export async function advanceWorkflow(instanceId: string, prisma: PrismaClient):
 
   const currentDef = stepDefs.find(d => d.order === instance.currentStepOrder)
   const currentSteps = instance.steps.filter(s => s.stepOrder === instance.currentStepOrder)
+  const executionMode = currentDef?.executionMode ?? 'sequential'
+
+  // Decide the batch outcome (pure — see evaluateApprovalBatch).
+  const { anyRejected, batchResolved, leftoverPendingIds } = evaluateApprovalBatch(
+    currentSteps, executionMode, currentDef?.requiredApprovals ?? 1,
+  )
 
   // ── Case 1: Any step REJECTED → reject the whole workflow ─────────────────
-  const anyRejected = currentSteps.some(s => s.decision === 'REJECTED')
   if (anyRejected) {
     // Cancel all pending escalation jobs at this step
     await Promise.all(currentSteps.filter(s => s.status === 'PENDING').map(s => cancelEscalation(s.id)))
@@ -141,23 +203,20 @@ export async function advanceWorkflow(instanceId: string, prisma: PrismaClient):
     return
   }
 
-  // ── Case 2: Check if current batch is resolved (all required approvals met) ─
-  const approvedCount = currentSteps.filter(s => s.decision === 'APPROVED').length
-  const executionMode = currentDef?.executionMode ?? 'sequential'
-  const requiredApprovals = currentDef?.requiredApprovals ?? 1
-
-  // DELEGATED steps at this order are still in-flight (delegatee has a new PENDING step)
-  const pendingCount = currentSteps.filter(s => s.status === 'PENDING').length
-
-  let batchResolved = false
-  if (executionMode === 'parallel') {
-    batchResolved = approvedCount >= requiredApprovals && pendingCount === 0
-  } else {
-    // Sequential: single approver must have approved; no pending left
-    batchResolved = approvedCount >= 1 && pendingCount === 0
-  }
-
+  // ── Case 2: Is the current batch resolved (required approvals met)? ────────
   if (!batchResolved) return // still waiting for more decisions at this step
+
+  // Wave 3.8 — the batch is APPROVED. For a parallel step that short-circuited
+  // on the required count, close any still-PENDING siblings so their escalation
+  // timers don't fire and they stop showing as actionable. (Empty for the
+  // sequential path, which required no pending steps to get here.)
+  if (leftoverPendingIds.length > 0) {
+    await Promise.all(leftoverPendingIds.map(id => cancelEscalation(id)))
+    await prisma.approvalStep.updateMany({
+      where: { id: { in: leftoverPendingIds } },
+      data:  { status: 'SKIPPED', decidedAt: new Date() },
+    })
+  }
 
   // ── Case 3: Batch resolved as APPROVED — advance or complete ──────────────
   const nextStepDef = stepDefs.find(d => d.order === instance.currentStepOrder + 1)
@@ -196,21 +255,11 @@ export async function advanceWorkflow(instanceId: string, prisma: PrismaClient):
     return
   }
 
-  // Advance to the next step — resolve approverId from def
-  let nextApproverId = nextStepDef.approverId
-  if (!nextApproverId && nextStepDef.roleRequired) {
-    // Find first active user in org with this role
-    const userRole = await prisma.userRole.findFirst({
-      where: {
-        user: { orgId: instance.orgId, deletedAt: null },
-        role: { name: nextStepDef.roleRequired },
-      },
-      include: { user: true },
-    })
-    nextApproverId = userRole?.userId
-  }
-  if (!nextApproverId) {
-    console.warn('[workflow-engine] no approver found for step %d (def: %j) — skipping', nextStepDef.order, nextStepDef)
+  // Advance to the next step — resolve approver(s) from def (Wave 3.8: plural
+  // for parallel steps, single for sequential).
+  const nextApproverIds = await resolveApprovers(nextStepDef, instance.orgId, prisma)
+  if (nextApproverIds.length === 0) {
+    console.warn('[workflow-engine] no approvers found for step %d (def: %j) — skipping', nextStepDef.order, nextStepDef)
     return
   }
 
@@ -219,20 +268,26 @@ export async function advanceWorkflow(instanceId: string, prisma: PrismaClient):
     data:  { currentStepOrder: nextStepDef.order },
   })
 
-  const newStepId = await createStepsForDef(prisma, instanceId, instance.orgId, nextStepDef, nextApproverId)
+  const newStepIds = await createStepsForDef(prisma, instanceId, instance.orgId, nextStepDef, nextApproverIds)
 
-  // Notify next approver
+  // Notify each next approver (one notification per concurrent approver).
   const contract = await prisma.contract.findUnique({ where: { id: instance.contractId } })
-  const nextApprover = await prisma.user.findUnique({ where: { id: nextApproverId } })
-  queueNotification({
-    orgId:        instance.orgId,
-    userId:       nextApproverId,
-    type:         'APPROVAL_REQUEST',
-    title:        'Contract awaiting your approval',
-    body:         `"${contract?.title ?? 'Contract'}" requires your approval (${nextStepDef.name}).`,
-    resourceType: 'approval_step',
-    resourceId:   newStepId,
-    email:        nextApprover?.email ?? undefined,
+  const nextApprovers = await prisma.user.findMany({
+    where: { id: { in: nextApproverIds } },
+    select: { id: true, email: true },
+  })
+  const emailById = new Map(nextApprovers.map(u => [u.id, u.email]))
+  nextApproverIds.forEach((approverId, i) => {
+    queueNotification({
+      orgId:        instance.orgId,
+      userId:       approverId,
+      type:         'APPROVAL_REQUEST',
+      title:        'Contract awaiting your approval',
+      body:         `"${contract?.title ?? 'Contract'}" requires your approval (${nextStepDef.name}).`,
+      resourceType: 'approval_step',
+      resourceId:   newStepIds[i],
+      email:        emailById.get(approverId) ?? undefined,
+    })
   })
 }
 
@@ -280,4 +335,45 @@ export async function resolveApprover(
   }
 
   return null
+}
+
+// ─── Resolve the FULL set of approvers for a step (Wave 3.8) ──────────────────
+// Plural resolver used by the parallel path. For a sequential step it collapses
+// to a single approver so behaviour is unchanged. Falls back cleanly to the
+// singular approverId/roleRequired fields for legacy stored definitions.
+
+export async function resolveApprovers(
+  stepDef: WorkflowStepDef,
+  orgId: string,
+  prisma: PrismaClient,
+): Promise<string[]> {
+  const parallel = stepDef.executionMode === 'parallel'
+  const ids = new Set<string>()
+
+  // Explicit approver ids (plural then singular).
+  for (const id of stepDef.approverIds ?? []) if (id) ids.add(id)
+  if (stepDef.approverId) ids.add(stepDef.approverId)
+
+  // Roles → users. For parallel, every org user holding any named role becomes
+  // a concurrent approver; for sequential, only the first (and only if no
+  // explicit approver was named).
+  const roles = [...(stepDef.roleRequireds ?? []), ...(stepDef.roleRequired ? [stepDef.roleRequired] : [])].filter(Boolean)
+  if (roles.length > 0) {
+    const userRoles = await prisma.userRole.findMany({
+      where: {
+        user: { orgId, deletedAt: null },
+        role: { name: { in: roles } },
+      },
+      select: { userId: true },
+    })
+    if (parallel) {
+      for (const ur of userRoles) ids.add(ur.userId)
+    } else if (ids.size === 0 && userRoles[0]) {
+      ids.add(userRoles[0].userId)
+    }
+  }
+
+  const all = [...ids]
+  // Sequential always collapses to a single approver.
+  return parallel ? all : all.slice(0, 1)
 }

@@ -17,10 +17,11 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { resolveLlm, NoProviderAvailable, type Tier } from '../lib/aiRouter.js'
 import { prisma } from '../lib/prisma.js'
-import { resolveApprover, checkAutoApprove, type WorkflowStepDef } from '../lib/workflow-engine.js'
+import { resolveApprovers, checkAutoApprove, type WorkflowStepDef } from '../lib/workflow-engine.js'
 import { generateDocument } from '../lib/template-engine.js'
 import { searchClauses } from '../lib/embeddings.js'
 import { advancedSearch, indexContract } from '../lib/elasticsearch.js'
+import { queueClassifyDocument, queueParseDocument } from '../lib/queue.js'
 import { applyPiiPolicy } from '../lib/pii-policy.js'
 
 const TIERS: Tier[] = ['reasoning', 'default', 'fast', 'embed', 'rerank', 'vision_ocr']
@@ -1993,8 +1994,10 @@ export async function internalAiRoutes(app: FastifyInstance) {
   })
 
   // ── POST /internal/ai/tools/request_create/undo (D.3.5 pattern) ────────────
-  // Soft-delete by setting status=CANCELLED. Requests don't have a
-  // deletedAt column — cancelled is the equivalent for our undo window.
+  // Wave 3.9 — soft-delete via the deletedAt column (which ContractRequest has),
+  // consistent with every request read path (all filter deletedAt:null) and with
+  // the contract undo. The old code wrote status='CANCELLED', which is NOT a
+  // member of the RequestStatus enum, corrupting status filters/counts.
   app.post('/tools/request_create/undo', async (req, reply) => {
     const body = z.object({
       orgId:     z.string().min(1),
@@ -2004,15 +2007,15 @@ export async function internalAiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ detail: 'Invalid request', issues: body.error.issues })
     }
     const existing = await prisma.contractRequest.findFirst({
-      where: { id: body.data.requestId, orgId: body.data.orgId, status: { not: 'CANCELLED' } },
+      where: { id: body.data.requestId, orgId: body.data.orgId, deletedAt: null },
       select: { id: true },
     })
     if (!existing) {
-      return reply.status(404).send({ detail: 'Request not found or already cancelled' })
+      return reply.status(404).send({ detail: 'Request not found or already undone' })
     }
     await prisma.contractRequest.update({
       where: { id: existing.id },
-      data:  { status: 'CANCELLED' },
+      data:  { deletedAt: new Date() },
     })
     return reply.send({ ok: true, undone: true, requestId: existing.id })
   })
@@ -2131,16 +2134,40 @@ export async function internalAiRoutes(app: FastifyInstance) {
     // retype / re_analyze — NOT reversible. We still run them, but the
     // caller surface (agent-threads.ts) will set reversible=false on the
     // ToolCall row so the UI doesn't render an Undo button.
+    // Wave 3.9 — re-run analysis by enqueuing a worker job, mirroring the REST
+    // /:id/analyze path so the contract can't wedge. If the latest version
+    // already has parsed text, smart-resume via classify (CLASSIFYING). If it
+    // has an uploaded doc but no parsed text yet, do a full re-parse
+    // (PENDING) — enqueuing classify would silently no-op and strand the
+    // contract in CLASSIFYING. Returns false if there's nothing to analyze.
+    const reanalyze = async (): Promise<boolean> => {
+      const latest = await prisma.contractVersion.findFirst({
+        where: { contractId: existing.id },
+        orderBy: { versionNumber: 'desc' },
+        select: { id: true, plainText: true, s3Key: true, mimeType: true },
+      })
+      if (!latest) return false
+      if (latest.plainText && latest.plainText.trim()) {
+        await prisma.contract.update({ where: { id: existing.id }, data: { analysisStatus: 'CLASSIFYING' } })
+        queueClassifyDocument({ contractId: existing.id, versionId: latest.id, orgId: body.orgId })
+        return true
+      }
+      if (latest.s3Key) {
+        const filename = latest.mimeType === 'application/pdf' ? 'contract.pdf'
+          : latest.mimeType?.includes('wordprocessingml') ? 'contract.docx'
+          : 'contract.txt'
+        await prisma.contract.update({ where: { id: existing.id }, data: { analysisStatus: 'PENDING' } })
+        queueParseDocument({ contractId: existing.id, versionId: latest.id, s3Key: latest.s3Key, mimeType: latest.mimeType ?? 'application/pdf', filename, orgId: body.orgId })
+        return true
+      }
+      return false
+    }
+
     if (body.action === 'retype') {
       const nextType = String(body.payload.type ?? '')
       if (!nextType) return reply.status(400).send({ detail: 'payload.type required' })
-      await prisma.contract.update({
-        where: { id: existing.id },
-        data:  { type: nextType, analysisStatus: 'PENDING' },
-      })
-      // TODO(D.5.5 follow-up): enqueue the analyze worker here when the
-      // lightweight internal enqueue helper exists. For now, a human can
-      // hit "Run analysis" after the retype lands.
+      await prisma.contract.update({ where: { id: existing.id }, data: { type: nextType } })
+      await reanalyze()  // best-effort re-analysis; retype still succeeds without a version
       return reply.send({
         ok: true,
         reversible: false,
@@ -2151,10 +2178,10 @@ export async function internalAiRoutes(app: FastifyInstance) {
     }
 
     if (body.action === 're_analyze') {
-      await prisma.contract.update({
-        where: { id: existing.id },
-        data:  { analysisStatus: 'PENDING' },
-      })
+      const queued = await reanalyze()
+      if (!queued) {
+        return reply.status(409).send({ detail: 'Nothing to analyze — this contract has no document to (re)parse yet.' })
+      }
       return reply.send({
         ok: true,
         reversible: false,
@@ -2333,16 +2360,17 @@ export async function internalAiRoutes(app: FastifyInstance) {
       })
     }
 
-    // Normal path — resolve the first approver + create instance + step.
-    const firstApproverId = await resolveApprover(firstStepDef, body.orgId, prisma as never)
-    if (!firstApproverId) {
+    // Normal path — resolve the first approver(s) + create instance + step(s).
+    // Wave 3.8 — a parallel first step fans out to all its approvers at once.
+    const firstApproverIds = await resolveApprovers(firstStepDef, body.orgId, prisma as never)
+    if (firstApproverIds.length === 0) {
       return reply.status(422).send({
         detail: `Cannot resolve approver for step "${firstStepDef.name}"`,
       })
     }
     const escalateAt = new Date(Date.now() + (firstStepDef.dueSoonHours ?? 48) * 60 * 60 * 1000)
 
-    const { inst, step } = await prisma.$transaction(async (tx) => {
+    const { inst, steps } = await prisma.$transaction(async (tx) => {
       const inst = await tx.approvalInstance.create({
         data: {
           orgId: body.orgId,
@@ -2353,33 +2381,39 @@ export async function internalAiRoutes(app: FastifyInstance) {
           submittedById: body.userId,
         },
       })
-      const step = await tx.approvalStep.create({
-        data: {
-          approvalInstanceId: inst.id,
-          orgId: body.orgId,
-          stepOrder: firstStepDef.order,
-          stepName:  firstStepDef.name,
-          approverId: firstApproverId,
-          status: 'PENDING',
-          escalateAt,
-        },
-      })
+      const steps = await Promise.all(firstApproverIds.map(approverId =>
+        tx.approvalStep.create({
+          data: {
+            approvalInstanceId: inst.id,
+            orgId: body.orgId,
+            stepOrder: firstStepDef.order,
+            stepName:  firstStepDef.name,
+            approverId,
+            status: 'PENDING',
+            escalateAt,
+          },
+        }),
+      ))
       await tx.contract.update({
         where: { id: contract.id },
         data:  { status: 'PENDING_APPROVAL' },
       })
-      return { inst, step }
+      return { inst, steps }
     })
 
     return reply.send({
       ok: true,
       reversible: true,
       instanceId: inst.id,
-      stepId: step.id,
+      // Keep the singular fields for backward-compat (first of the batch), plus
+      // the full set for parallel steps.
+      stepId: steps[0].id,
+      stepIds: steps.map(s => s.id),
       contractId: contract.id,
       previousStatus: contract.status,
       workflowDefinitionId: workflow.id,
-      firstApproverId,
+      firstApproverId: firstApproverIds[0],
+      approverIds: firstApproverIds,
       currentStepOrder: firstStepDef.order,
       autoApproved: false,
     })
@@ -2730,6 +2764,20 @@ export async function internalAiRoutes(app: FastifyInstance) {
       })
       return { contract, version }
     })
+
+    // Wave 3.2 — index the new draft in ES so it's findable via
+    // portfolio_search / contract_search immediately (mirrors the AI-draft
+    // sibling below). We have the real plainText here. Fire-and-forget.
+    indexContract(created.contract.id, {
+      orgId:            body.orgId,
+      title:            created.contract.title,
+      type:             created.contract.type,
+      status:           created.contract.status,
+      counterpartyName: created.contract.counterpartyName ?? undefined,
+      plainText,
+      tags:             created.contract.tags,
+      createdAt:        created.contract.createdAt.toISOString(),
+    }).catch(() => { /* swallow */ })
 
     return reply.send({
       ok: true,
