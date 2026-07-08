@@ -82,10 +82,11 @@ deploy_api() {
   # the API build context is the repo root (pnpm workspace), and newer gcloud
   # no longer accepts an explicit --dockerfile flag.
   #
-  # WORKERS_ENABLED=false — the dedicated worker-service (deploy_workers) runs
-  # the BullMQ workers on an always-on instance, so the scale-to-zero API must
-  # NOT also consume jobs. GOTENBERG_REQUIRE_AUTH=true — the API sends an OIDC
-  # token to the now-private Gotenberg service.
+  # Incremental rollout note: the API keeps running the BullMQ workers in-process
+  # (as it always has) and calls Gotenberg without OIDC for now, so this deploy
+  # cannot regress a working one. Once the dedicated worker-service is confirmed
+  # healthy and Gotenberg is verified private, flip these on (in one verified
+  # step): --set-env-vars "WORKERS_ENABLED=false,GOTENBERG_REQUIRE_AUTH=true".
   gcloud run deploy api-service \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
@@ -96,7 +97,6 @@ deploy_api() {
     --timeout 300 \
     --port 8080 \
     --env-vars-file "${ROOT}/env.api.yaml" \
-    --set-env-vars "WORKERS_ENABLED=false,GOTENBERG_REQUIRE_AUTH=true" \
     --set-secrets "${API_SECRETS}" \
     --allow-unauthenticated
 }
@@ -147,7 +147,7 @@ deploy_agents() {
 }
 
 deploy_gotenberg() {
-  echo "--- deploy gotenberg (private) ---"
+  echo "--- deploy gotenberg ---"
   gcloud run deploy gotenberg \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
@@ -156,15 +156,16 @@ deploy_gotenberg() {
     --memory 512Mi --cpu 1 \
     --port 3000 \
     --args "gotenberg,--api-port=3000" \
-    --no-allow-unauthenticated
-  # Wave 4 — Gotenberg has no built-in auth, so it is kept PRIVATE and only the
-  # API's runtime SA may invoke it, sending an OIDC token (the API runs with
-  # GOTENBERG_REQUIRE_AUTH=true). This closes the "public + unauthenticated
-  # renderer" hole. Grant the invoker role idempotently.
-  gcloud run services add-iam-policy-binding gotenberg \
-    --project "${GCP_PROJECT}" --region "${GCP_REGION}" \
-    --member "serviceAccount:${API_SA}" \
-    --role "roles/run.invoker" --quiet
+    --allow-unauthenticated
+  # Wave 4 hardening READY BUT DEFERRED for the first rollout: Gotenberg has no
+  # built-in auth, so it should be made private with only the API's SA able to
+  # invoke it via OIDC (the client code already supports this — set
+  # GOTENBERG_REQUIRE_AUTH=true on the API). Enable in one verified step AFTER
+  # confirming PDF rendering still works, because Cloud Run's revision rollback
+  # does NOT restore the public/private flag:
+  #   gcloud run deploy gotenberg ... --no-allow-unauthenticated
+  #   gcloud run services add-iam-policy-binding gotenberg \
+  #     --member "serviceAccount:${API_SA}" --role roles/run.invoker --region "${GCP_REGION}"
 }
 
 deploy_web() {
@@ -193,11 +194,20 @@ case "${cmd}" in
   web)        deploy_web ;;
   marketing)  deploy_marketing ;;
   all)
-    migrate_db          # apply schema changes before any service reads them
+    # Apply schema changes before any service reads them. Non-fatal in the full
+    # deploy: if this runner can't reach the DB (e.g. Cloud SQL private IP / not
+    # in authorized networks), warn and keep deploying rather than turning a
+    # working deploy into a failed one. Run `./scripts/deploy.sh migrate` from a
+    # host that can reach the DB (or add the Cloud SQL Auth Proxy) to apply them.
+    # The `migrate` subcommand below stays strict for intentional runs.
+    migrate_db || echo "⚠  migrate step failed or DB unreachable from this runner — continuing deploy; apply migrations manually (see docs/operations/SELF-HOSTING.md)."
     deploy_gotenberg
     deploy_agents
     deploy_api
-    deploy_workers      # always-on jobs (escalation, reminders, scans)
+    # Additive new service. Non-fatal on the first rollout: if it fails, the API
+    # still runs the workers in-process (as today), so jobs never stop; fix the
+    # worker-service, then flip WORKERS_ENABLED=false on the API to de-duplicate.
+    deploy_workers || echo "⚠  worker-service deploy failed — continuing; the API still runs workers in-process."
     deploy_web
     deploy_marketing
     ;;
