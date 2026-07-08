@@ -136,7 +136,6 @@ export function AdminOrgPage() {
                   {/* Preview — shows uploaded/URLed logo or a subtle placeholder */}
                   <div className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
                     {logoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={logoUrl}
                         alt="Organization logo preview"

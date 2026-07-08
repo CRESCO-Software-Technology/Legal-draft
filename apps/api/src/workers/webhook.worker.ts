@@ -19,6 +19,7 @@ import { prisma } from '../lib/prisma.js'
 import type { WebhookDeliveryJob } from '../lib/queue.js'
 import { formatForSlack } from '../lib/slack-formatter.js'
 import { formatForTeams } from '../lib/teams-formatter.js'
+import { assertPublicUrl, ssrfGuardEnabled } from '../lib/ssrf-guard.js'
 
 async function handleWebhookDelivery(data: WebhookDeliveryJob) {
   const wh = await prisma.webhook.findUnique({
@@ -60,6 +61,11 @@ async function handleWebhookDelivery(data: WebhookDeliveryJob) {
   let errorMessage: string | null = null
 
   try {
+    // Wave 1.5 — SSRF guard: refuse to POST to a URL that resolves to a
+    // private / loopback / link-local / cloud-metadata address (hosted
+    // deployments only; self-host can opt out via WEBHOOK_ALLOW_PRIVATE_URLS).
+    // Throws before the fetch, so an internal target never gets a request.
+    await assertPublicUrl(wh.url)
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), 15_000)
     const r = await fetch(wh.url, {
@@ -76,10 +82,16 @@ async function handleWebhookDelivery(data: WebhookDeliveryJob) {
     })
     clearTimeout(t)
     responseStatus = r.status
-    // Capture first 1000 chars of body for the delivery log; some
-    // receivers return verbose error pages so cap aggressively.
-    const text = await r.text().catch(() => '')
-    responseBody = text.slice(0, 1000)
+    // Wave 1.5 — do NOT reflect the response body into the delivery log when
+    // the SSRF guard is active: it was an exfiltration channel (a blocked
+    // internal endpoint's content leaking to a tenant). Store status only.
+    // With the guard off (self-host/dev) we keep a capped body for debugging.
+    if (ssrfGuardEnabled()) {
+      responseBody = null
+    } else {
+      const text = await r.text().catch(() => '')
+      responseBody = text.slice(0, 1000)
+    }
     succeeded = r.ok
     if (!succeeded) errorMessage = `Non-2xx response: ${r.status}`
   } catch (err) {

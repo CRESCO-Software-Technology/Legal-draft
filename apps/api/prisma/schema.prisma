@@ -1266,3 +1266,15 @@ model MarketingContact {
   @@index([email])
   @@map("marketing_contacts")
 }
+
+// Wave 2.4 — durable storage for the collaborative-editing Yjs document.
+// The Hocuspocus Database extension persists each contract's live Y.Doc binary
+// here (keyed by the document name "contract:<id>"), so concurrent edits
+// survive a collab-server restart instead of evaporating from memory.
+model CollabState {
+  documentName String   @id
+  state        Bytes
+  updatedAt    DateTime @updatedAt
+
+  @@map("collab_states")
+}

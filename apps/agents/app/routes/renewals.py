@@ -57,6 +57,7 @@ class RenewalAdviceRequest(BaseModel):
     valueSummary:    str | None = None     # e.g. "USD 100,000/month"
     pastPerformance: str | None = None     # optional: SLA adherence, issue count
     obligations:     list[dict] | None = None  # passed from Contract.metadata
+    orgId:           str | None = None     # Wave 3.5 — enables per-org BYOK key
 
 
 _SYSTEM = """You are a seasoned contracts counsel. A renewal window \
@@ -113,7 +114,7 @@ async def renewal_advice(
 
     # P7.5.3 — Langfuse tracing via resolve_llm.
     try:
-        resolved = await resolve_llm("default", streaming=False, trace_name="renewal.advice")
+        resolved = await resolve_llm("default", org_id=req.orgId, streaming=False, trace_name="renewal.advice")
         llm = resolved.llm
         callbacks = resolved.callbacks
     except Exception:

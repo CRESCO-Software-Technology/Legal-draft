@@ -20,6 +20,7 @@
  *   ⌘D       — toggles "details" panel inside the artifact (later)
  */
 import { useState } from 'react'
+import { sanitizeHtml } from '@/lib/sanitize'
 import { X, Download, ChevronDown, FileText, Table as TableIcon,
          GitCompareArrows, ListChecks, FormInput, Loader2, Check, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -196,7 +197,7 @@ function DocBody({ artifact }: { artifact: DocArtifact }) {
         className="p-10 prose prose-sm max-w-none prose-headings:font-bold prose-headings:text-gray-900"
         // Doc HTML is already sanitized by the agent; we trust it like
         // the existing TipTap renderer does on contract pages.
-        dangerouslySetInnerHTML={{ __html: artifact.html }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(artifact.html) }}
       />
       {artifact.citations && artifact.citations.length > 0 && (
         <div className="px-10 pb-6 pt-2 border-t border-gray-100 mt-4">

@@ -11,13 +11,20 @@
  *
  * Open from: the header [Compare ▾] button, or the History rail
  * section. Esc closes.
+ *
+ * Wave 2.1 (2026-07): per-change Accept/Reject is now real. Changes are parsed
+ * from the diff blob (lib/redline.ts), reviewed in the side list or bulk-set,
+ * and "Apply as new version" resolves the decisions into merged HTML saved via
+ * POST /contracts/:id/html-version. Undecided changes keep the older version.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { DiffViewer } from './DiffViewer'
+import { extractChanges, resolveDiff, type RedlineDecision, type RedlineChange } from '@/lib/redline'
+import { sanitizeHtml } from '@/lib/sanitize'
 import { X, ChevronDown, Loader2, User, Clock, Check, XCircle } from 'lucide-react'
 
 interface VersionMini {
@@ -48,6 +55,9 @@ export function CompareMode({
   const [olderId, setOlderId] = useState<string>(sorted[1]?.id ?? '')
   const [filter,  setFilter]  = useState<'all' | 'theirs' | 'ours' | 'pending'>('all')
 
+  const newer = sorted.find(v => v.id === newerId) ?? null
+  const older = sorted.find(v => v.id === olderId) ?? null
+
   // Keep picker state in sync when the parent's versions list changes.
   useEffect(() => {
     if (sorted.length === 0) return
@@ -71,10 +81,43 @@ export function CompareMode({
     enabled: open && !!olderId && !!newerId && olderId !== newerId,
   })
 
-  if (!open) return null
+  // Wave 2.1 — per-change accept/reject. Changes come from the diff blob in
+  // document order; decisions are keyed by their ids. accept = take theirs,
+  // reject = keep ours. Reset when the version pair (or diff) changes.
+  const changes = useMemo(() => (diff?.diffHtml ? extractChanges(diff.diffHtml) : []), [diff?.diffHtml])
+  const [decisions, setDecisions] = useState<Record<string, RedlineDecision>>({})
+  useEffect(() => { setDecisions({}) }, [olderId, newerId, diff?.diffHtml])
 
-  const newer = sorted.find(v => v.id === newerId) ?? null
-  const older = sorted.find(v => v.id === olderId) ?? null
+  const acceptedCount = Object.values(decisions).filter(d => d === 'accept').length
+  const rejectedCount = Object.values(decisions).filter(d => d === 'reject').length
+  const pendingCount  = changes.length - acceptedCount - rejectedCount
+  const setAll = (d: RedlineDecision) => setDecisions(Object.fromEntries(changes.map(c => [c.id, d])))
+  const setOne = (id: string, d: RedlineDecision) =>
+    setDecisions(prev => (prev[id] === d ? (() => { const n = { ...prev }; delete n[id]; return n })() : { ...prev, [id]: d }))
+
+  const qc = useQueryClient()
+  const applyMerge = useMutation({
+    mutationFn: async () => {
+      const mergedHtml = sanitizeHtml(resolveDiff(diff!.diffHtml, decisions, 'reject'))
+      const note = `Redline merge: ${acceptedCount} accepted, ${rejectedCount} rejected vs v${newer?.versionNumber ?? '?'}`
+      const r = await api.post(`/contracts/${contractId}/html-version`, { htmlContent: mergedHtml, changeNote: note })
+      return r.data
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contract', contractId] })
+      qc.invalidateQueries({ queryKey: ['contract-versions', contractId] })
+      onClose()
+    },
+  })
+
+  const visibleChanges = changes.filter(c =>
+    filter === 'all'    ? true
+    : filter === 'theirs' ? c.type === 'ins'
+    : filter === 'ours'   ? c.type === 'del'
+    : /* pending */       !decisions[c.id],
+  )
+
+  if (!open) return null
 
   return (
     <div
@@ -116,7 +159,7 @@ export function CompareMode({
           )}
         </div>
 
-        {/* Filter chips — V1 visual stubs; wire to per-change toggles in v1.1 */}
+        {/* Filter chips — filter the per-change review list (theirs=added, ours=removed, pending=undecided) */}
         <div className="ml-auto flex items-center gap-1 p-0.5 bg-gray-100 rounded-lg">
           {(['all', 'theirs', 'ours', 'pending'] as const).map(f => (
             <button
@@ -149,18 +192,42 @@ export function CompareMode({
             <span className="text-emerald-700 font-medium">{diff.stats.insertions}</span> added,{' '}
             <span className="text-red-700 font-medium">{diff.stats.deletions}</span> removed
           </span>
-          <div className="h-3 w-px bg-gray-300" aria-hidden />
-          <span className="text-gray-400 italic">
-            Per-change Accept / Reject with attribution arrives in v1.1; for now use bulk:
-          </span>
-          <Button size="sm" variant="outline" className="gap-1 ml-auto text-emerald-700 border-emerald-200 hover:bg-emerald-50" disabled title="Coming in v1.1">
-            <Check className="h-3.5 w-3.5" />
-            Accept all theirs
-          </Button>
-          <Button size="sm" variant="outline" className="gap-1 text-red-700 border-red-200 hover:bg-red-50" disabled title="Coming in v1.1">
-            <XCircle className="h-3.5 w-3.5" />
-            Reject all theirs
-          </Button>
+          {changes.length > 0 && (
+            <>
+              <div className="h-3 w-px bg-gray-300" aria-hidden />
+              <span className="text-gray-500">
+                <span className="text-emerald-700 font-medium">{acceptedCount}</span> accepted ·{' '}
+                <span className="text-red-700 font-medium">{rejectedCount}</span> rejected ·{' '}
+                <span className="text-gray-500 font-medium">{pendingCount}</span> pending
+              </span>
+            </>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              size="sm" variant="outline"
+              className="gap-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+              onClick={() => setAll('accept')} disabled={changes.length === 0}
+            >
+              <Check className="h-3.5 w-3.5" /> Accept all
+            </Button>
+            <Button
+              size="sm" variant="outline"
+              className="gap-1 text-red-700 border-red-200 hover:bg-red-50"
+              onClick={() => setAll('reject')} disabled={changes.length === 0}
+            >
+              <XCircle className="h-3.5 w-3.5" /> Reject all
+            </Button>
+            <Button
+              size="sm" className="gap-1"
+              onClick={() => applyMerge.mutate()}
+              disabled={changes.length === 0 || acceptedCount + rejectedCount === 0 || applyMerge.isPending}
+              title={pendingCount > 0 ? `${pendingCount} undecided change(s) will keep the older version` : 'Save the merged result as a new version'}
+            >
+              {applyMerge.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Apply as new version
+            </Button>
+          </div>
+          {applyMerge.isError && <span className="text-red-600">Failed to apply — try again.</span>}
         </div>
       )}
 
@@ -180,13 +247,23 @@ export function CompareMode({
             <p className="text-sm text-gray-500">Computing diff…</p>
           </Centered>
         ) : diff?.diffHtml ? (
-          <div className="mx-auto max-w-5xl">
-            <DiffViewer
-              diffHtml={diff.diffHtml}
-              stats={diff.stats}
-              v1Label={older ? `v${older.versionNumber} · ${short(older.authorName)} · ${dateLabel(older.createdAt)}` : 'Older'}
-              v2Label={newer ? `v${newer.versionNumber} · ${short(newer.authorName)} · ${dateLabel(newer.createdAt)}` : 'Newer'}
-            />
+          <div className="flex gap-4 items-start">
+            <div className="flex-1 min-w-0">
+              <DiffViewer
+                diffHtml={diff.diffHtml}
+                stats={diff.stats}
+                v1Label={older ? `v${older.versionNumber} · ${short(older.authorName)} · ${dateLabel(older.createdAt)}` : 'Older'}
+                v2Label={newer ? `v${newer.versionNumber} · ${short(newer.authorName)} · ${dateLabel(newer.createdAt)}` : 'Newer'}
+              />
+            </div>
+            {changes.length > 0 && (
+              <ChangesList
+                changes={visibleChanges}
+                totalChanges={changes.length}
+                decisions={decisions}
+                onDecide={setOne}
+              />
+            )}
           </div>
         ) : (
           <Centered>
@@ -254,6 +331,78 @@ function Attribution({
       <Clock className="h-3 w-3 opacity-60" />
       <span>{dateLabel(createdAt)}</span>
     </div>
+  )
+}
+
+function ChangesList({
+  changes,
+  totalChanges,
+  decisions,
+  onDecide,
+}: {
+  changes:      RedlineChange[]
+  totalChanges: number
+  decisions:    Record<string, RedlineDecision>
+  onDecide:     (id: string, d: RedlineDecision) => void
+}) {
+  return (
+    <aside className="w-80 shrink-0 sticky top-0 self-start max-h-[calc(100vh-170px)] overflow-auto rounded-lg border border-gray-200 bg-white">
+      <div className="px-3 py-2 border-b border-gray-100 text-xs font-semibold text-gray-700 sticky top-0 bg-white">
+        Changes ({totalChanges})
+      </div>
+      {changes.length === 0 ? (
+        <p className="px-3 py-4 text-xs text-gray-400 italic">No changes match this filter.</p>
+      ) : (
+        <ul className="divide-y divide-gray-50">
+          {changes.map(c => {
+            const decision = decisions[c.id]
+            return (
+              <li key={c.id} className="px-3 py-2">
+                <div className="flex items-start gap-2">
+                  <span className={cn(
+                    'mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+                    c.type === 'ins' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700',
+                  )}>
+                    {c.type === 'ins' ? 'Added' : 'Removed'}
+                  </span>
+                  <p className={cn(
+                    'text-xs text-gray-700 line-clamp-3',
+                    c.type === 'del' && 'line-through text-gray-400',
+                  )}>
+                    {c.text || <span className="italic text-gray-400">(formatting change)</span>}
+                  </p>
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <button
+                    onClick={() => onDecide(c.id, 'accept')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border',
+                      decision === 'accept'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'text-emerald-700 border-emerald-200 hover:bg-emerald-50',
+                    )}
+                  >
+                    <Check className="h-3 w-3" /> Accept
+                  </button>
+                  <button
+                    onClick={() => onDecide(c.id, 'reject')}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border',
+                      decision === 'reject'
+                        ? 'bg-red-600 text-white border-red-600'
+                        : 'text-red-700 border-red-200 hover:bg-red-50',
+                    )}
+                  >
+                    <XCircle className="h-3 w-3" /> Reject
+                  </button>
+                  {!decision && <span className="text-[10px] text-gray-400">pending</span>}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </aside>
   )
 }
 

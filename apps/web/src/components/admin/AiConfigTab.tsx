@@ -15,6 +15,7 @@
  * rail) → usage (the reality check) → audit (the evidence trail).
  */
 import { useEffect, useState } from 'react'
+import { sanitizeHtml } from '@/lib/sanitize'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -399,7 +400,7 @@ function AuditRow({ event, isOpen, onToggle }: { event: AuditEvent; isOpen: bool
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-[12px] text-gray-900" dangerouslySetInnerHTML={{ __html: summary }} />
+            <span className="text-[12px] text-gray-900" dangerouslySetInnerHTML={{ __html: sanitizeHtml(summary) }} />
             <span className="text-[10px] text-gray-400 tabular-nums ml-auto flex-shrink-0" title={new Date(event.createdAt).toLocaleString()}>
               {formatRel(event.createdAt)}
             </span>

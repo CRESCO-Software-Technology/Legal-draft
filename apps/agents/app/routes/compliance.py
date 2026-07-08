@@ -139,6 +139,7 @@ class CheckComplianceRequest(BaseModel):
     contractType: str = "general commercial"
     frameworks:   list[str] | None = None  # default: assess all, gate by applicability
     jurisdiction: str | None = None
+    orgId:        str | None = None  # Wave 3.5 — enables per-org BYOK key
 
 
 @router.post("/check_compliance")
@@ -157,6 +158,7 @@ async def check_compliance(req: CheckComplianceRequest):
     try:
         resolved = await resolve_llm(
             "default",
+            org_id=req.orgId,
             streaming=False,
             trace_name="compliance.check",
         )

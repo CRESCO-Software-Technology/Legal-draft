@@ -35,10 +35,27 @@ _OCR_MAX_PAGES          = 40   # safety cap; huge binders are a P2.3 concern
 
 try:
     from PIL import Image
+    _pil_available = True
+except ImportError:
+    _pil_available = False
+
+# macOS dev OCR backend — ocrmac (Apple Vision, no binary dependency).
+try:
     from ocrmac import ocrmac as _ocrmac
-    _ocrmac_available = True
+    _ocrmac_available = _pil_available
 except ImportError:
     _ocrmac_available = False
+
+# Linux/prod OCR backend — pytesseract over the tesseract-ocr binary, which the
+# agents Docker image installs via apt. Wave 4: previously the only backend was
+# ocrmac, so scanned PDFs silently yielded empty text in the Linux container.
+try:
+    import pytesseract as _pytesseract
+    _tesseract_available = _pil_available
+except ImportError:
+    _tesseract_available = False
+
+_ocr_available = _ocrmac_available or _tesseract_available
 
 
 def _is_likely_scanned(plain_text: str, page_count: int) -> bool:
@@ -52,11 +69,25 @@ def _is_likely_scanned(plain_text: str, page_count: int) -> bool:
     return avg < _SCANNED_CHARS_PER_PAGE
 
 
+def _ocr_page_lines(img) -> list[str]:
+    """OCR one rendered page image into reading-order text lines. Prefers
+    ocrmac (macOS); falls back to pytesseract (Linux/prod)."""
+    if _ocrmac_available:
+        # ocrmac returns (text, confidence, [x, y, w, h]) with Y inverted
+        # (bottom-left origin) — sort by Y then X for top-down reading order.
+        rows = _ocrmac.OCR(img).recognize()
+        sorted_rows = sorted(rows, key=lambda r: (-(r[2][1] + r[2][3]), r[2][0]))
+        return [t for t in ((text or "").strip() for text, _c, _b in sorted_rows) if t]
+    # pytesseract yields reading-order plain text directly.
+    raw = _pytesseract.image_to_string(img)
+    return [ln.strip() for ln in raw.splitlines() if ln.strip()]
+
+
 def _ocr_pdf(doc) -> tuple[str, str, int]:
-    """Render each page as a PIL image at 200 DPI + pass through ocrmac.
-    Returns (html, plain, pages_ocrd). Stops at _OCR_MAX_PAGES.
+    """Render each page as a PIL image at 200 DPI + pass through the available
+    OCR backend. Returns (html, plain, pages_ocrd). Stops at _OCR_MAX_PAGES.
     """
-    if not _ocrmac_available:
+    if not _ocr_available:
         return "", "", 0
     html_parts: list[str] = []
     plain_parts: list[str] = []
@@ -69,20 +100,11 @@ def _ocr_pdf(doc) -> tuple[str, str, int]:
         pix = page.get_pixmap(dpi=200, alpha=False)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         try:
-            rows = _ocrmac.OCR(img).recognize()
+            page_lines = _ocr_page_lines(img)
         except Exception as e:  # noqa: BLE001
             logger.warning("[extract] OCR page %d failed: %s", page_num + 1, e)
             continue
         pages_ocrd += 1
-        # Sort by Y then X (top-down, left-to-right reading order).
-        # ocrmac returns (text, confidence, [x, y, w, h]) with Y inverted
-        # (bottom-left origin) — we flip to top-down.
-        sorted_rows = sorted(rows, key=lambda r: (-(r[2][1] + r[2][3]), r[2][0]))
-        page_lines: list[str] = []
-        for text, _conf, _bbox in sorted_rows:
-            t = (text or "").strip()
-            if t:
-                page_lines.append(t)
         if page_lines:
             page_plain = " ".join(page_lines)
             plain_parts.append(page_plain)
@@ -565,20 +587,22 @@ async def extract_pdf(
     # because stamped/signed digital PDFs often have mixed content and the
     # density heuristic catches both pure-scan and mostly-scan cases.
     if _doc is not None and _is_likely_scanned(plain_text, page_count):
-        if _ocrmac_available:
+        if _ocr_available:
+            backend_name = "ocrmac" if _ocrmac_available else "tesseract"
             logger.info(
-                "[extract] scanned PDF detected (pages=%d, digital_chars=%d) — running OCR",
-                page_count, len(plain_text),
+                "[extract] scanned PDF detected (pages=%d, digital_chars=%d) — running OCR via %s",
+                page_count, len(plain_text), backend_name,
             )
             ocr_html, ocr_plain, ocr_pages = _ocr_pdf(_doc)
             if ocr_plain:
                 html_content = ocr_html
                 plain_text   = ocr_plain
                 ocr_applied  = True
-                ocr_backend  = "ocrmac"
+                ocr_backend  = backend_name
         else:
             logger.warning(
-                "[extract] scanned PDF (pages=%d) — no OCR backend available",
+                "[extract] scanned PDF (pages=%d) — no OCR backend available "
+                "(install tesseract-ocr + pytesseract)",
                 page_count,
             )
 

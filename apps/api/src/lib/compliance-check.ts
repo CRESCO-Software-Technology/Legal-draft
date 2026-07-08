@@ -128,6 +128,7 @@ export async function runComplianceCheck({
       contractType: contract.type,
       frameworks:   requested,
       jurisdiction: contract.jurisdiction ?? undefined,
+      orgId,   // Wave 3.5 — lets the agents service resolve the org's BYOK key
     }),
   })
   if (!pyRes.ok) {

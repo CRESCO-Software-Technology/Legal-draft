@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
@@ -156,7 +157,7 @@ export async function counterpartyRoutes(app: FastifyInstance) {
     const { orgId } = req.user
 
     const counterparty = await prisma.counterparty.create({
-      data: { ...body, orgId },
+      data: { ...body, orgId } as Prisma.CounterpartyUncheckedCreateInput,
     })
 
     return reply.status(201).send(counterparty)
@@ -301,7 +302,7 @@ export async function counterpartyRoutes(app: FastifyInstance) {
     const existing = await prisma.counterparty.findFirst({ where: { id, orgId, deletedAt: null } })
     if (!existing) return reply.status(404).send({ detail: 'Counterparty not found' })
 
-    const updated = await prisma.counterparty.update({ where: { id, orgId }, data: body })
+    const updated = await prisma.counterparty.update({ where: { id, orgId }, data: body as Prisma.CounterpartyUncheckedUpdateInput })
     return reply.send(updated)
   })
 

@@ -83,9 +83,12 @@ services:
       /bin/sh -c "
         mc alias set local http://minio:9000 minioadmin minioadmin;
         mc mb --ignore-existing local/clm-documents;
-        mc anonymous set download local/clm-documents;
+        mc anonymous set none local/clm-documents;
         exit 0;
       "
+    # The bucket is PRIVATE — documents are served via presigned URLs
+    # (@aws-sdk/s3-request-presigner), never anonymous download. The prior
+    # `anonymous set download` exposed every uploaded contract to the world.
 
   gotenberg:
     image: gotenberg/gotenberg:8

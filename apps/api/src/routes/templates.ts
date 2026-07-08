@@ -5,6 +5,7 @@
  * Templates are assembled by the template-engine into contract HTML.
  */
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
@@ -168,8 +169,8 @@ export async function templateRoutes(app: FastifyInstance) {
           content: s.content ?? '',
           sortOrder: s.sortOrder ?? i,
           clauseRefs: s.clauseRefs ?? [],
-          conditionalLogic: s.conditionalLogic ?? null,
-        })),
+          conditionalLogic: (s.conditionalLogic ?? null) as Prisma.InputJsonValue,
+        })) as Prisma.TemplateSectionCreateManyInput[],
       }),
       prisma.template.update({ where: { id }, data: { version: { increment: 1 } } }),
     ])

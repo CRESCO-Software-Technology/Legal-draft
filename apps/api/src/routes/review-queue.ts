@@ -29,7 +29,9 @@
  */
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+// Wave 1.7 — this router mutates AI-extracted contract fields (keyTerms /
+// metadata) on verify/reject, so it must be RBAC-gated, not requireAuth-only.
+import { requirePermission } from '../middleware/permissions.js'
 import { prisma } from '../lib/prisma.js'
 
 // Fields worth surfacing in the queue. Extraction produces keyTerms for
@@ -74,7 +76,7 @@ function valueOfField(contract: Record<string, unknown>, field: string): string 
 export async function reviewQueueRoutes(app: FastifyInstance) {
 
   // ── GET /api/v1/review-queue ────────────────────────────────────────────
-  app.get('/', { preHandler: requireAuth }, async (req, reply) => {
+  app.get('/', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const q = z.object({
       threshold: z.coerce.number().min(0).max(1).default(0.7),
@@ -151,7 +153,7 @@ export async function reviewQueueRoutes(app: FastifyInstance) {
   })
 
   // ── POST /api/v1/review-queue/:contractId/verify ────────────────────────
-  app.post('/:contractId/verify', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/:contractId/verify', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
     const { orgId, sub: userId } = req.user
     const { contractId } = req.params as { contractId: string }
     const body = z.object({
@@ -201,7 +203,7 @@ export async function reviewQueueRoutes(app: FastifyInstance) {
   })
 
   // ── POST /api/v1/review-queue/:contractId/reject ────────────────────────
-  app.post('/:contractId/reject', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/:contractId/reject', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
     const { orgId, sub: userId } = req.user
     const { contractId } = req.params as { contractId: string }
     const body = z.object({ field: z.string().min(1).max(60) }).parse(req.body)

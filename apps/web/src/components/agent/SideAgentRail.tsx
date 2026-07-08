@@ -783,18 +783,19 @@ export function SideAgentRail() {
     // Small visual yield so the "running" state renders before the await.
     await new Promise(ok => setTimeout(ok, 0))
 
-    // If we're not in a persisted thread yet (rail test path, or agent
-    // hasn't created one), the apply endpoint can't write a ToolCall row
-    // — fall back to the stub success transition so the UI still completes.
+    // Wave 2.5 — without a persisted thread the apply endpoint can't write a
+    // ToolCall row, so the action CANNOT actually be applied. Surface an honest
+    // error instead of the old 600ms fake "applied" transition, which reported
+    // a contract mutation that never reached the server.
     if (!threadIdRef.current || !toolName) {
-      setTimeout(() => {
-        setMessages(prev => prev.map(m => {
-          if (m.id !== msgId) return m
-          const pending = (m.pendingActions ?? []).map(a =>
-            a.id === actionId ? { ...a, status: 'applied' as const } : a)
-          return { ...m, pendingActions: pending }
-        }))
-      }, 600)
+      setMessages(prev => prev.map(m => {
+        if (m.id !== msgId) return m
+        const pending = (m.pendingActions ?? []).map(a =>
+          a.id === actionId
+            ? { ...a, status: 'error' as const, errorMessage: 'Cannot apply yet — send a message to start a conversation so this action can be saved, then try again.' }
+            : a)
+        return { ...m, pendingActions: pending }
+      }))
       return
     }
 

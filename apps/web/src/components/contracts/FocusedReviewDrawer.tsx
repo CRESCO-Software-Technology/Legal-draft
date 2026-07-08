@@ -16,12 +16,33 @@
  * B.5.6 — UI only, local state. B.5.7 persists reviewState to the DB.
  */
 import { useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle, X, ChevronLeft, ChevronRight, FileEdit, XCircle,
   BookOpen, Circle, MessageCircle, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { classifyRisk, type RiskClause, type RiskKind } from './RiskDecorations'
+
+/** A playbook position as returned by GET /playbook/positions. */
+interface PlaybookPosition {
+  id:             string
+  positionType:   'preferred' | 'acceptable' | 'fallback' | 'walkaway'
+  content:        string
+  notes?:         string | null
+  clauseCategory?: { id: string; name: string } | null
+}
+
+const POSITION_TONE: Record<string, string> = {
+  preferred:  'bg-emerald-50 text-emerald-700',
+  acceptable: 'bg-blue-50 text-blue-700',
+  fallback:   'bg-amber-50 text-amber-700',
+  walkaway:   'bg-red-50 text-red-700',
+}
+
+const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+const stripHtml = (s: string) => s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 
 /** One clause with everything the drawer needs to render it. */
 export interface FocusedClause extends RiskClause {
@@ -65,6 +86,19 @@ export function FocusedReviewDrawer({
   onClose: () => void
 }) {
   const clause = clauses[currentIndex]
+
+  // Wave 2.2 — real playbook comparison. Pull the org's playbook positions and
+  // match them to this clause's type by category name (replaces the old
+  // hardcoded "Playbook v2 / Non-standard" stub with grounded DB data).
+  const { data: playbookPositions } = useQuery<PlaybookPosition[]>({
+    queryKey: ['playbook-positions'],
+    queryFn: () => api.get('/playbook/positions').then(r => r.data.data ?? []),
+    staleTime: 5 * 60_000,
+  })
+  const matchedPositions = (playbookPositions ?? []).filter(p =>
+    clause?.clauseType && p.clauseCategory?.name &&
+    normalize(p.clauseCategory.name) === normalize(clause.clauseType),
+  )
 
   // Keyboard: Esc closes, j/k nav like the rest of the app might adopt.
   useEffect(() => {
@@ -176,26 +210,37 @@ export function FocusedReviewDrawer({
         )}
       </Section>
 
-      {/* ── PLAYBOOK GAP (deviations only) ─────────────────────────────── */}
+      {/* ── PLAYBOOK COMPARISON (deviations only) ─────────────────────── */}
       {kind === 'deviation' && (
-        <Section title="Playbook gap">
-          <dl className="space-y-1.5 text-sm">
-            <div className="flex justify-between gap-4">
-              <dt className="text-gray-500 text-xs">Your standard</dt>
-              <dd className="text-gray-400 italic text-right">Playbook v2</dd>
+        <Section title="Playbook comparison">
+          {matchedPositions.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">
+              No playbook position defined for {labelClauseType(clause.clauseType)}.
+              Add one in Admin → Playbook to compare this clause automatically.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {matchedPositions.map(p => (
+                <div key={p.id} className="rounded-md border border-gray-200 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={cn(
+                      'text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded',
+                      POSITION_TONE[p.positionType] ?? 'bg-gray-100 text-gray-600',
+                    )}>
+                      {p.positionType}
+                    </span>
+                    {p.clauseCategory?.name && (
+                      <span className="text-[10px] text-gray-400 truncate">{p.clauseCategory.name}</span>
+                    )}
+                  </div>
+                  {p.content && (
+                    <p className="mt-1 text-xs text-gray-600 line-clamp-4">{stripHtml(p.content)}</p>
+                  )}
+                  {p.notes && <p className="mt-1 text-[11px] text-gray-400 italic">{p.notes}</p>}
+                </div>
+              ))}
             </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-gray-500 text-xs">This contract</dt>
-              <dd className="text-gray-900 text-right">Non-standard</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-gray-500 text-xs">Severity</dt>
-              <dd className="text-blue-700 font-medium text-right">Deviation</dd>
-            </div>
-          </dl>
-          <p className="mt-2 text-[11px] text-gray-400 italic">
-            Playbook comparison is a stub in V1 — full mapping lands with B.5.13 (Compare Versions).
-          </p>
+          )}
         </Section>
       )}
 

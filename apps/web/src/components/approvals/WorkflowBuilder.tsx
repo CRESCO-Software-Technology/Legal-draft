@@ -15,6 +15,9 @@ export interface WorkflowStepDef {
   name:             string
   approverId?:      string
   roleRequired?:    string
+  // Wave 3.8 — plural approvers for parallel steps (N run concurrently).
+  approverIds?:     string[]
+  roleRequireds?:   string[]
   executionMode:    'sequential' | 'parallel'
   requiredApprovals: number
   dueSoonHours:     number
@@ -44,6 +47,16 @@ export function WorkflowBuilder({ steps, onChange }: Props) {
   function update(idx: number, patch: Partial<WorkflowStepDef>) {
     const next = steps.map((s, i) => i === idx ? { ...s, ...patch } : s)
     onChange(next)
+  }
+
+  // Wave 3.8 — multi-approver toggles for parallel steps.
+  function toggleApprover(idx: number, userId: string) {
+    const cur = steps[idx].approverIds ?? []
+    update(idx, { approverIds: cur.includes(userId) ? cur.filter(id => id !== userId) : [...cur, userId] })
+  }
+  function toggleRole(idx: number, role: string) {
+    const cur = steps[idx].roleRequireds ?? []
+    update(idx, { roleRequireds: cur.includes(role) ? cur.filter(r => r !== role) : [...cur, role] })
   }
 
   function addStep() {
@@ -99,13 +112,29 @@ export function WorkflowBuilder({ steps, onChange }: Props) {
             <span className="flex-1 text-sm font-medium text-gray-800 truncate">
               {step.name || <span className="text-gray-400">Untitled step</span>}
             </span>
-            {step.approverId && (
-              <span className="text-xs text-gray-500 hidden sm:block">
-                {users.find(u => u.id === step.approverId)?.name ?? step.approverId}
-              </span>
-            )}
-            {step.roleRequired && !step.approverId && (
-              <span className="text-xs text-gray-500 hidden sm:block">{step.roleRequired}</span>
+            {step.executionMode === 'parallel' ? (
+              (() => {
+                const n = (step.approverIds?.length ?? 0)
+                const roles = step.roleRequireds ?? []
+                const label = [
+                  n > 0 ? `${n} approver${n === 1 ? '' : 's'}` : null,
+                  roles.length > 0 ? roles.join(', ') : null,
+                ].filter(Boolean).join(' + ')
+                return label
+                  ? <span className="text-xs text-gray-500 hidden sm:block">{`${label} · ${step.requiredApprovals} required`}</span>
+                  : null
+              })()
+            ) : (
+              <>
+                {step.approverId && (
+                  <span className="text-xs text-gray-500 hidden sm:block">
+                    {users.find(u => u.id === step.approverId)?.name ?? step.approverId}
+                  </span>
+                )}
+                {step.roleRequired && !step.approverId && (
+                  <span className="text-xs text-gray-500 hidden sm:block">{step.roleRequired}</span>
+                )}
+              </>
             )}
             <div className="flex items-center gap-0.5 ml-2" onClick={e => e.stopPropagation()}>
               <button onClick={() => moveUp(idx)} disabled={idx === 0} className="p-0.5 rounded hover:bg-gray-200 disabled:opacity-30">
@@ -134,32 +163,70 @@ export function WorkflowBuilder({ steps, onChange }: Props) {
                 />
               </div>
 
-              {/* Approver: specific user OR role */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Specific approver</label>
-                  <select
-                    value={step.approverId ?? ''}
-                    onChange={e => update(idx, { approverId: e.target.value || undefined, roleRequired: e.target.value ? undefined : step.roleRequired })}
-                    className="w-full rounded-md border border-gray-300 text-sm px-2.5 py-1.5 bg-white"
-                  >
-                    <option value="">— None —</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+              {/* Approver(s). Sequential → one user OR role. Parallel → pick
+                  the full set of concurrent approvers (users and/or roles). */}
+              {step.executionMode === 'sequential' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Specific approver</label>
+                    <select
+                      value={step.approverId ?? ''}
+                      onChange={e => update(idx, { approverId: e.target.value || undefined, roleRequired: e.target.value ? undefined : step.roleRequired })}
+                      className="w-full rounded-md border border-gray-300 text-sm px-2.5 py-1.5 bg-white"
+                    >
+                      <option value="">— None —</option>
+                      {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Or by role</label>
+                    <select
+                      value={step.roleRequired ?? ''}
+                      onChange={e => update(idx, { roleRequired: e.target.value || undefined, approverId: e.target.value ? undefined : step.approverId })}
+                      className="w-full rounded-md border border-gray-300 text-sm px-2.5 py-1.5 bg-white"
+                      disabled={!!step.approverId}
+                    >
+                      <option value="">— None —</option>
+                      {SYSTEM_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
                 </div>
+              ) : (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Or by role</label>
-                  <select
-                    value={step.roleRequired ?? ''}
-                    onChange={e => update(idx, { roleRequired: e.target.value || undefined, approverId: e.target.value ? undefined : step.approverId })}
-                    className="w-full rounded-md border border-gray-300 text-sm px-2.5 py-1.5 bg-white"
-                    disabled={!!step.approverId}
-                  >
-                    <option value="">— None —</option>
-                    {SYSTEM_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Approvers (all run concurrently — every user who holds a selected role is included)
+                  </label>
+                  <div className="max-h-40 overflow-y-auto rounded-md border border-gray-300 divide-y">
+                    {users.length === 0 && <div className="px-2.5 py-2 text-xs text-gray-400">No users found</div>}
+                    {users.map(u => (
+                      <label key={u.id} className="flex items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="checkbox"
+                          checked={(step.approverIds ?? []).includes(u.id)}
+                          onChange={() => toggleApprover(idx, u.id)}
+                          className="accent-blue-600"
+                        />
+                        {u.name}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {SYSTEM_ROLES.map(r => {
+                      const on = (step.roleRequireds ?? []).includes(r)
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => toggleRole(idx, r)}
+                          className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${on ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                        >
+                          {r}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Due hours + escalation */}
               <div className="grid grid-cols-2 gap-3">
@@ -197,7 +264,14 @@ export function WorkflowBuilder({ steps, onChange }: Props) {
                         name={`mode-${idx}`}
                         value={mode}
                         checked={step.executionMode === mode}
-                        onChange={() => update(idx, { executionMode: mode })}
+                        onChange={() => update(idx, {
+                          executionMode: mode,
+                          // Seed the parallel set from a previously-chosen single
+                          // approver so switching modes doesn't lose the pick.
+                          ...(mode === 'parallel' && !(step.approverIds?.length) && step.approverId
+                            ? { approverIds: [step.approverId] }
+                            : {}),
+                        })}
                         className="accent-blue-600"
                       />
                       {mode.charAt(0).toUpperCase() + mode.slice(1)}
@@ -210,9 +284,22 @@ export function WorkflowBuilder({ steps, onChange }: Props) {
                         type="number"
                         min={1}
                         value={step.requiredApprovals}
-                        onChange={e => update(idx, { requiredApprovals: Math.max(1, parseInt(e.target.value) || 1) })}
+                        onChange={e => {
+                          const raw = Math.max(1, parseInt(e.target.value) || 1)
+                          // Cap at the explicit approver count when no roles are
+                          // used (roles resolve to an unknown user count at run
+                          // time; the server clamps then). Prevents an
+                          // unsatisfiable "5 of 3".
+                          const explicit = (step.approverIds ?? []).length
+                          const hasRoles = (step.roleRequireds ?? []).length > 0
+                          const capped = (!hasRoles && explicit > 0) ? Math.min(raw, explicit) : raw
+                          update(idx, { requiredApprovals: capped })
+                        }}
                         className="w-16 text-sm"
                       />
+                      <span className="text-xs text-gray-400">
+                        of {step.approverIds?.length ?? 0}{(step.roleRequireds?.length ?? 0) > 0 ? ' + role members' : ''}
+                      </span>
                     </div>
                   )}
                 </div>

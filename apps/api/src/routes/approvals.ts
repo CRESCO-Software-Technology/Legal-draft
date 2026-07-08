@@ -23,6 +23,39 @@ import { advanceWorkflow } from '../lib/workflow-engine.js'
 import { queueNotification, notificationQueue } from '../lib/queue.js'
 import { AuditAction } from '@clm/types'
 
+// Wave 3.8 — validate workflow step definitions at save time. Each step must
+// name at least one approver, and a parallel step's requiredApprovals must be
+// satisfiable by the explicitly-named approvers (roles resolve at runtime, so
+// we only hard-cap when no roles are used). Returns an error string or null.
+function validateWorkflowSteps(steps: unknown[]): string | null {
+  for (let i = 0; i < steps.length; i++) {
+    const s = (steps[i] ?? {}) as {
+      name?: string
+      approverId?: string
+      roleRequired?: string
+      approverIds?: unknown
+      roleRequireds?: unknown
+      executionMode?: string
+      requiredApprovals?: number
+    }
+    const approverIds = Array.isArray(s.approverIds) ? s.approverIds.filter(Boolean) : []
+    const roleRequireds = Array.isArray(s.roleRequireds) ? s.roleRequireds.filter(Boolean) : []
+    const hasApprover = !!s.approverId || !!s.roleRequired || approverIds.length > 0 || roleRequireds.length > 0
+    if (!hasApprover) {
+      return `Step ${i + 1} ("${s.name || 'Untitled'}") has no approver — pick a user or role.`
+    }
+    if (s.executionMode === 'parallel') {
+      const req = s.requiredApprovals ?? 1
+      if (req < 1) return `Step ${i + 1} requiredApprovals must be at least 1.`
+      // Only hard-cap when the approver set is fully explicit (no roles).
+      if (roleRequireds.length === 0 && approverIds.length > 0 && req > approverIds.length) {
+        return `Step ${i + 1} requires ${req} approvals but only ${approverIds.length} approver(s) are named.`
+      }
+    }
+  }
+  return null
+}
+
 export async function approvalRoutes(app: FastifyInstance) {
 
   // ── GET /my-queue — pending approval steps assigned to me ─────────────────
@@ -280,6 +313,9 @@ export async function approvalRoutes(app: FastifyInstance) {
     try { await notificationQueue.remove(`escalate-${stepId}`) } catch { /* no-op */ }
 
     if (decision === 'DELEGATED') {
+      // Guarded at entry (line ~261), but TS doesn't carry that narrowing
+      // into this separate block — assert delegateTo is present.
+      if (!delegateTo) return reply.status(400).send({ error: 'delegateTo is required when delegating' })
       // Mark current step DELEGATED, create new PENDING step for delegatee
       const delegatee = await prisma.user.findFirst({ where: { id: delegateTo, orgId } })
       if (!delegatee) return reply.status(400).send({ error: 'Delegatee user not found in this org' })
@@ -414,6 +450,8 @@ export async function approvalRoutes(app: FastifyInstance) {
 
     if (!name?.trim()) return reply.status(400).send({ error: 'name is required' })
     if (!Array.isArray(steps) || steps.length === 0) return reply.status(400).send({ error: 'steps must be a non-empty array' })
+    const stepError = validateWorkflowSteps(steps)
+    if (stepError) return reply.status(400).send({ error: stepError })
 
     // If setting as default, clear any existing default
     if (isDefault) {
@@ -456,6 +494,12 @@ export async function approvalRoutes(app: FastifyInstance) {
       where: { id: workflowId, orgId, deletedAt: null },
     })
     if (!existing) return reply.status(404).send({ error: 'Workflow not found' })
+
+    if (steps !== undefined) {
+      if (!Array.isArray(steps) || steps.length === 0) return reply.status(400).send({ error: 'steps must be a non-empty array' })
+      const stepError = validateWorkflowSteps(steps)
+      if (stepError) return reply.status(400).send({ error: stepError })
+    }
 
     if (isDefault) {
       await prisma.workflowDefinition.updateMany({

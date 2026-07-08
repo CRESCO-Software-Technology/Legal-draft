@@ -26,7 +26,7 @@ const sections = [
   {
     icon: Lock,
     title: 'Encryption',
-    body: 'TLS 1.3 in transit. AES-256 at rest. Bring-your-own-key (BYOK) for AI provider credentials, encrypted with an org-specific master key. Document storage on S3 / MinIO / GCS — versioning and immutability supported by the underlying backend.',
+    body: 'TLS in transit and encryption at rest on the hosted deployment; on self-hosted installs, transport and at-rest encryption follow your own infrastructure configuration. Bring-your-own-key (BYOK) for AI provider credentials, encrypted with an org-specific master key. Document storage on S3 / MinIO / GCS — versioning and immutability supported by the underlying backend.',
   },
   {
     icon: AlertTriangle,
@@ -41,7 +41,7 @@ const sections = [
   {
     icon: ScrollText,
     title: 'Compliance roadmap',
-    body: 'SOC 2 Type II is in progress (target: H2 2026). HIPAA-aligned controls available with BAA on Enterprise. GDPR-ready: customer DPAs available, sub-processor list published, data export and deletion endpoints in the API.',
+    body: 'SOC 2 Type II is on our roadmap — not yet audited; in the meantime, self-hosting keeps your contracts on your own infrastructure. GDPR: the API provides data-export and deletion endpoints, and self-hosting keeps you in control of data residency. HIPAA-aligned controls are planned for Enterprise.',
   },
 ]
 
@@ -80,7 +80,7 @@ export default function Security() {
             </p>
             <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-emerald-700/30 bg-emerald-700/10 px-3 py-1 text-xs font-medium text-emerald-300">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              SOC 2 Type II in progress (target: H2 2026)
+              SOC 2 Type II on the roadmap · self-host today for full data control
             </div>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 // @ts-ignore — no type definitions for node-htmldiff
@@ -18,7 +19,7 @@ import { assertCostCapNotExceeded, recordCost, estimateCostUsd, CostCapExceededE
 import { indexContract, deleteContractFromIndex } from '../lib/elasticsearch.js'
 import { storeClauseSegments, searchClauses } from '../lib/embeddings.js'
 import { queueParseDocument, queueClassifyDocument, queueExtractAi, queueChunkAndIndex, queueSplitBinder, queueEmbedContract, queueRedlineAnalysis, queueApprovalSummary, queueNotification, queueDraftContract } from '../lib/queue.js'
-import { checkAutoApprove, resolveApprover, type WorkflowStepDef } from '../lib/workflow-engine.js'
+import { checkAutoApprove, resolveApprovers, type WorkflowStepDef } from '../lib/workflow-engine.js'
 import {
   CreateContractSchema,
   UpdateContractSchema,
@@ -310,7 +311,7 @@ export async function contractRoutes(app: FastifyInstance) {
     // starting…" forever. Default to DONE so the row is immediately
     // usable; uploads override this back to PENDING (see /upload).
     const contract = await prisma.contract.create({
-      data: { ...body, orgId, ownerId, analysisStatus: body.analysisStatus ?? 'DONE' },
+      data: { ...body, orgId, ownerId, analysisStatus: 'DONE' } as Prisma.ContractUncheckedCreateInput,
     })
 
     // P81 audit (2026-05-02). Index every fresh contract into ES so
@@ -384,6 +385,29 @@ export async function contractRoutes(app: FastifyInstance) {
     }
 
     if (!fileBuffer) return reply.status(400).send({ detail: 'No file uploaded' })
+
+    // Wave 1.8 — validate the upload by MAGIC BYTES, not the client-declared
+    // mimetype (which is spoofable). A user could otherwise store HTML/SVG/
+    // executables as a "contract" and have the download endpoint serve them
+    // back with an attacker-chosen Content-Type (content-confusion / stored
+    // XSS). We sniff the real type and use it; text/plain is allowed only when
+    // no binary signature is present. Everything else is rejected.
+    const detectBinaryType = (b: Buffer): string | null => {
+      if (b.subarray(0, 4).toString('latin1') === '%PDF') return 'application/pdf'
+      if (b.subarray(0, 4).toString('hex') === '504b0304') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' // DOCX (zip)
+      if (b.subarray(0, 8).toString('hex') === 'd0cf11e0a1b11ae1') return 'application/msword' // legacy DOC (OLE)
+      return null
+    }
+    const detected = detectBinaryType(fileBuffer)
+    if (detected) {
+      mimeType = detected // trust the bytes, not the client
+    } else if ((mimeType === 'text/plain' || mimeType === '') && fileBuffer.length > 0) {
+      mimeType = 'text/plain'
+    } else {
+      return reply.status(415).send({
+        detail: 'Unsupported or mismatched file type. Allowed: PDF, DOCX, DOC, TXT.',
+      })
+    }
 
     // Clean filename → readable title
     const cleanFilename = filename
@@ -909,19 +933,35 @@ export async function contractRoutes(app: FastifyInstance) {
     // Use the contract's real orgId (internal calls come in with orgId='system')
     const effectiveOrgId = existing.orgId
 
-    const updated = await prisma.contract.update({ where: { id }, data: body })
+    const updated = await prisma.contract.update({ where: { id }, data: body as Prisma.ContractUncheckedUpdateInput })
 
-    // Re-index if searchable fields changed
+    // Re-index if searchable fields changed. indexContract is a full-document
+    // overwrite (elasticsearch.ts), so we must carry the existing full text and
+    // the other searchable fields through — otherwise a metadata-only PATCH
+    // (e.g. a title edit) would wipe plainText and blank the BM25 body. (Wave 3.1)
     if (body.title || body.status || body.counterpartyName || body.tags) {
+      const currentVersion = existing.currentVersionId
+        ? await prisma.contractVersion.findUnique({
+            where: { id: existing.currentVersionId },
+            select: { plainText: true },
+          })
+        : null
       indexContract(id, {
         orgId: effectiveOrgId,
         title: updated.title,
         type: updated.type,
         status: updated.status,
         counterpartyName: updated.counterpartyName ?? undefined,
-        plainText: '',
+        jurisdiction: updated.jurisdiction ?? undefined,
+        plainText: currentVersion?.plainText ?? '',
+        summary: updated.summary ?? undefined,
         tags: updated.tags,
+        riskScore: updated.riskScore ?? undefined,
+        effectiveDate: updated.effectiveDate?.toISOString(),
+        expiryDate: updated.expiryDate?.toISOString(),
         createdAt: updated.createdAt.toISOString(),
+        keyTerms: updated.keyTerms as Record<string, unknown>,
+        metadata: updated.metadata as Record<string, unknown>,
       }).catch(() => {})
     }
 
@@ -973,7 +1013,7 @@ export async function contractRoutes(app: FastifyInstance) {
         requestDescription: (draftCtx?.requestDescription as string) ?? contract.title,
         contractType:      (draftCtx?.contractType as string) ?? contract.type,
         counterpartyName:  (draftCtx?.counterpartyName as string) ?? contract.counterpartyName ?? undefined,
-        estimatedValue:    (draftCtx?.estimatedValue as number) ?? (contract.value as number) ?? undefined,
+        estimatedValue:    (draftCtx?.estimatedValue as number) ?? (contract.value != null ? Number(contract.value) : undefined),
       })
       return reply.send({ status: 'queued', contractId: id, analysisStatus: 'DRAFTING', mode: 'draft' })
     }
@@ -1842,9 +1882,11 @@ export async function contractRoutes(app: FastifyInstance) {
       return reply.status(201).send({ instanceId: instance.id, status: 'AUTO_APPROVED', autoApproved: true })
     }
 
-    // ── Normal flow: create instance + first step ─────────────────────────────
-    const firstApproverId = await resolveApprover(firstStepDef, orgId, prisma)
-    if (!firstApproverId) {
+    // ── Normal flow: create instance + first step(s) ──────────────────────────
+    // Wave 3.8 — a `parallel` first step fans out to all its approvers at once;
+    // a sequential step resolves to a single approver.
+    const firstApproverIds = await resolveApprovers(firstStepDef, orgId, prisma)
+    if (firstApproverIds.length === 0) {
       return reply.status(422).send({
         error: `Cannot resolve approver for step "${firstStepDef.name}". Check the workflow configuration.`,
       })
@@ -1864,27 +1906,31 @@ export async function contractRoutes(app: FastifyInstance) {
         },
       })
 
-      const step = await tx.approvalStep.create({
-        data: {
-          approvalInstanceId: inst.id,
-          orgId,
-          stepOrder:  firstStepDef.order,
-          stepName:   firstStepDef.name,
-          approverId: firstApproverId,
-          status:     'PENDING',
-          escalateAt,
-        },
-      })
+      const steps = await Promise.all(firstApproverIds.map(approverId =>
+        tx.approvalStep.create({
+          data: {
+            approvalInstanceId: inst.id,
+            orgId,
+            stepOrder:  firstStepDef.order,
+            stepName:   firstStepDef.name,
+            approverId,
+            status:     'PENDING',
+            escalateAt,
+          },
+        }),
+      ))
 
       await tx.contract.update({ where: { id: contractId }, data: { status: 'PENDING_APPROVAL' } })
 
-      return { inst, step }
+      return { inst, steps }
     })
 
-    // Queue escalation timer
+    // Queue an escalation timer per concurrent approver step.
     const delayMs = (firstStepDef.dueSoonHours ?? 48) * 60 * 60 * 1000
-    const escalationJob = await queueEscalation_({ instanceId: instance.inst.id, stepId: instance.step.id, orgId, escalateTo: firstStepDef.escalateTo }, delayMs)
-    await prisma.approvalStep.update({ where: { id: instance.step.id }, data: { escalationJobId: escalationJob.id?.toString() } })
+    await Promise.all(instance.steps.map(async (step) => {
+      const escalationJob = await queueEscalation_({ instanceId: instance.inst.id, stepId: step.id, orgId, escalateTo: firstStepDef.escalateTo }, delayMs)
+      await prisma.approvalStep.update({ where: { id: step.id }, data: { escalationJobId: escalationJob.id?.toString() } })
+    }))
 
     // Queue AI summary generation
     const latestVersion = await prisma.contractVersion.findFirst({
@@ -1897,21 +1943,27 @@ export async function contractRoutes(app: FastifyInstance) {
         contractId,
         versionId:   latestVersion.id,
         orgId,
-        approverIds: [firstApproverId],
+        approverIds: firstApproverIds,
       })
     }
 
-    // Notify first approver
-    const approver = await prisma.user.findUnique({ where: { id: firstApproverId } })
-    queueNotification({
-      orgId,
-      userId:       firstApproverId,
-      type:         'APPROVAL_REQUEST',
-      title:        'Contract awaiting your approval',
-      body:         `"${contract.title}" has been submitted for approval (${firstStepDef.name}).`,
-      resourceType: 'approval_step',
-      resourceId:   instance.step.id,
-      email:        approver?.email ?? undefined,
+    // Notify every first-step approver.
+    const approvers = await prisma.user.findMany({
+      where: { id: { in: firstApproverIds } },
+      select: { id: true, email: true },
+    })
+    const emailById = new Map(approvers.map(u => [u.id, u.email]))
+    instance.steps.forEach((step) => {
+      queueNotification({
+        orgId,
+        userId:       step.approverId,
+        type:         'APPROVAL_REQUEST',
+        title:        'Contract awaiting your approval',
+        body:         `"${contract.title}" has been submitted for approval (${firstStepDef.name}).`,
+        resourceType: 'approval_step',
+        resourceId:   step.id,
+        email:        emailById.get(step.approverId) ?? undefined,
+      })
     })
 
     createAuditEvent({
@@ -1919,11 +1971,12 @@ export async function contractRoutes(app: FastifyInstance) {
       action:       AuditAction.APPROVAL_SUBMITTED,
       resourceType: 'contract',
       resourceId:   contractId,
-      metadata:     { instanceId: instance.inst.id, workflowId: workflow.id },
+      metadata:     { instanceId: instance.inst.id, workflowId: workflow.id, approverCount: firstApproverIds.length },
     }).catch(() => {})
 
     // Phase 10 — Slack/webhook subscribers get an actionable card with
-    // Approve/Reject buttons (slack-formatter adds them for type=slack).
+    // Approve/Reject buttons (slack-formatter adds them for type=slack). The
+    // card points at the first approver/step of the (possibly parallel) batch.
     fireWebhook(orgId, 'approval.submitted', {
       contractId,
       title:      contract.title,
@@ -1931,9 +1984,9 @@ export async function contractRoutes(app: FastifyInstance) {
       value:      contract.value != null ? Number(contract.value) : null,
       currency:   contract.currency,
       instanceId: instance.inst.id,
-      stepId:     instance.step.id,
+      stepId:     instance.steps[0].id,
       stepName:   firstStepDef.name,
-      approverId: firstApproverId,
+      approverId: instance.steps[0].approverId,
     }).catch(() => {})
 
     return reply.status(201).send({
@@ -1943,14 +1996,14 @@ export async function contractRoutes(app: FastifyInstance) {
       autoApproved:         false,
       workflowDefinitionId: workflow.id,
       currentStepOrder:     firstStepDef.order,
-      steps: [{
-        id:          instance.step.id,
+      steps: instance.steps.map(step => ({
+        id:          step.id,
         stepOrder:   firstStepDef.order,
         stepName:    firstStepDef.name,
-        approverId:  firstApproverId,
+        approverId:  step.approverId,
         status:      'PENDING',
         escalateAt,
-      }],
+      })),
     })
   })
 
@@ -2155,6 +2208,7 @@ export async function contractRoutes(app: FastifyInstance) {
         expiryDate:    contract.expiryDate ? contract.expiryDate.toISOString().slice(0, 10) : undefined,
         valueSummary,
         obligations:   obligations.slice(0, 10),
+        orgId,   // Wave 3.5 — lets the agents service resolve the org's BYOK key
       }),
     })
     if (!pyRes.ok) {

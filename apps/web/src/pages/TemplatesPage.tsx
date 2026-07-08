@@ -4,6 +4,7 @@
  * Template builder with TipTap section editor + variable definition panel.
  */
 import { useState } from 'react'
+import { sanitizeHtml } from '@/lib/sanitize'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Edit2, Trash2, Eye, FileText, Globe, Lock, Loader2, Search } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -366,7 +367,7 @@ function PreviewModal({ templateId, onClose }: { templateId: string; onClose: ()
           {data?.html && (
             <div
               className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: data.html }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(data.html) }}
             />
           )}
         </div>

@@ -3440,9 +3440,17 @@ export function ContractDetailPage() {
                 </div>
                 <button
                   onClick={() => {
-                    // Scroll to an inline approval card below the document, or open a drawer.
-                    // For now, keep the click hint; full approval UX is a follow-up.
-                    window.alert('Approval action — inline approval card to be wired in a follow-up commit.')
+                    // Wave 2.3 — scroll to the real DecisionStrip (Approve /
+                    // Reject / Delegate) that renders above the document when
+                    // the current user is the pending approver. Falls back to
+                    // the Approvals tab's ApprovalCard if the strip isn't
+                    // mounted. (Replaces the window.alert placeholder.)
+                    const strip = document.getElementById('approval-decision-strip')
+                    if (strip) {
+                      strip.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    } else {
+                      setTab('approval')
+                    }
                   }}
                   className="w-full text-center py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
                 >

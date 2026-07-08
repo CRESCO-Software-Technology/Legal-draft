@@ -10,8 +10,17 @@ import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { AuditAction } from '@clm/types'
+import { resolveSecret } from '../lib/secrets.js'
 
-const PORTAL_SECRET = process.env.PORTAL_JWT_SECRET ?? process.env.JWT_SECRET ?? 'portal-dev-secret'
+// Portal tokens are signed with PORTAL_JWT_SECRET, isolated from the user
+// JWT_SECRET. Resolved lazily + cached; production fails closed if missing/
+// weak (lib/secrets.ts). The old chained `?? JWT_SECRET ?? 'portal-dev-secret'`
+// fallback is gone — it both leaked a hardcoded default and broke isolation.
+let _portalSecret: string | null = null
+function portalSecret(): string {
+  if (_portalSecret === null) _portalSecret = resolveSecret('PORTAL_JWT_SECRET')
+  return _portalSecret
+}
 const FRONTEND_URL  = process.env.FRONTEND_URL ?? 'http://localhost:5173'
 
 export interface PortalTokenPayload {
@@ -23,11 +32,11 @@ export interface PortalTokenPayload {
 }
 
 export function signPortalToken(payload: Omit<PortalTokenPayload, 'type'>, expiresInSeconds: number): string {
-  return jwt.sign({ ...payload, type: 'portal' }, PORTAL_SECRET, { expiresIn: expiresInSeconds })
+  return jwt.sign({ ...payload, type: 'portal' }, portalSecret(), { expiresIn: expiresInSeconds })
 }
 
 export function verifyPortalToken(token: string): PortalTokenPayload {
-  return jwt.verify(token, PORTAL_SECRET) as PortalTokenPayload
+  return jwt.verify(token, portalSecret()) as PortalTokenPayload
 }
 
 export async function shareRoutes(app: FastifyInstance) {

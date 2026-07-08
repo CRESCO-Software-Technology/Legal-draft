@@ -1,11 +1,16 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import crypto from 'node:crypto'
+import type { Permission } from '@clm/types'
 import { verifyToken, type JwtPayload } from '../lib/jwt.js'
 import { prisma } from '../lib/prisma.js'
+import { resolveApiScopePermissions } from '../lib/permissions.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user: JwtPayload
+    // `apiPermissions` is set only on public-API-key requests (Wave 1.2):
+    // the key's scopes resolved to a concrete permission set. When present,
+    // requirePermission evaluates it directly instead of role lookup.
+    user: JwtPayload & { apiPermissions?: Permission[] }
   }
 }
 
@@ -73,12 +78,16 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
       prisma.apiKey.update({ where: { id: key.id }, data: { lastUsedAt: new Date() } })
         .catch(() => { /* ignore */ })
 
+      // Wave 1.2 — resolve the key's scopes to concrete permissions. Empty
+      // scopes → no permissions (previously this silently became org ADMIN).
+      // Scope strings are NOT role names; they map via API_SCOPE_PERMISSIONS.
       req.user = {
         sub:   `apikey:${key.id}`,
         orgId: key.orgId,
-        roles: key.scopes.length > 0 ? key.scopes : ['ADMIN'],
+        roles: [],
         type:  'access',
-      } as never
+        apiPermissions: resolveApiScopePermissions(key.scopes),
+      }
       return
     } catch {
       return reply.status(401).send({ title: 'Unauthorized', detail: 'API key auth failed', status: 401 })

@@ -38,6 +38,7 @@ class ExtractObligationsRequest(BaseModel):
     plainText:      str
     contractType:   str = "general commercial"
     effectiveDate:  str | None = None  # ISO date, anchors relative due dates
+    orgId:          str | None = None  # Wave 3.5 — enables per-org BYOK key
 
 
 _SYSTEM = """You are a contract operations specialist. Extract every \
@@ -92,6 +93,7 @@ async def extract_obligations(
     try:
         resolved = await resolve_llm(
             "default",
+            org_id=req.orgId,
             streaming=False,
             trace_name="obligations.extract",
         )
