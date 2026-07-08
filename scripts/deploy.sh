@@ -70,8 +70,15 @@ GOOGLE_API_KEY=google-key:latest"
 migrate_db() {
   echo "--- prisma migrate deploy ---"
   local db_url
-  db_url="$(gcloud secrets versions access latest --secret=database-url --project="${GCP_PROJECT}")"
-  [[ -n "${db_url}" ]] || { echo "could not read database-url secret" >&2; exit 1; }
+  # Best-effort read of the DB URL. The deployer SA may lack secret access, or
+  # the DB may be unreachable from this runner — suppress the raw gcloud error
+  # and return non-zero so the caller decides whether to block (the full deploy
+  # does NOT; the standalone `migrate` subcommand does).
+  db_url="$(gcloud secrets versions access latest --secret=database-url --project="${GCP_PROJECT}" 2>/dev/null || true)"
+  if [[ -z "${db_url}" ]]; then
+    echo "⚠  could not read the database-url secret from this runner. Grant the deployer service account roles/secretmanager.secretAccessor to enable auto-migrate, or apply migrations separately (docs/operations/SELF-HOSTING.md)."
+    return 1
+  fi
   ( cd "${ROOT}/apps/api" && DATABASE_URL="${db_url}" pnpm exec prisma migrate deploy )
 }
 
@@ -107,7 +114,8 @@ deploy_api() {
 # reminders, renewal scans) actually fire. Not publicly invocable.
 deploy_workers() {
   echo "--- deploy worker-service (always-on BullMQ workers) ---"
-  [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; exit 1; }
+  # return (not exit) so the non-fatal caller in `all` isn't killed.
+  [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; return 1; }
   gcloud run deploy worker-service \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
@@ -200,7 +208,7 @@ case "${cmd}" in
     # working deploy into a failed one. Run `./scripts/deploy.sh migrate` from a
     # host that can reach the DB (or add the Cloud SQL Auth Proxy) to apply them.
     # The `migrate` subcommand below stays strict for intentional runs.
-    migrate_db || echo "⚠  migrate step failed or DB unreachable from this runner — continuing deploy; apply migrations manually (see docs/operations/SELF-HOSTING.md)."
+    migrate_db || echo "   → continuing deploy; migrations not auto-applied this run."
     deploy_gotenberg
     deploy_agents
     deploy_api
