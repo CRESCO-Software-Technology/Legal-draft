@@ -762,6 +762,10 @@ model ContractShareLink {
   contractId   String
   token        String    @unique // 32-byte random hex — embedded in portal JWT
   label        String?
+  // Address the link was emailed to (null when it was just copied to clipboard).
+  // Also consulted by the inbound-email sender allow-list so an invited
+  // counterparty can email a redline back.
+  invitedEmail String?
   permissions  String[]  @default(["read"]) // "read" | "comment" | "upload" (legacy alias: "edit")
   expiresAt    DateTime
   viewCount    Int       @default(0)

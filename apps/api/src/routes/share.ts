@@ -11,6 +11,7 @@ import { requirePermission } from '../middleware/permissions.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { AuditAction } from '@clm/types'
 import { resolveSecret } from '../lib/secrets.js'
+import { sendShareLinkEmail } from '../lib/share-email.js'
 
 // Portal tokens are signed with PORTAL_JWT_SECRET, isolated from the user
 // JWT_SECRET. Resolved lazily + cached; production fails closed if missing/
@@ -57,9 +58,20 @@ export async function shareRoutes(app: FastifyInstance) {
       label,
       permissions = ['read'],
       expiresInHours = 168,  // 7 days default
-    } = req.body as { label?: string; permissions?: string[]; expiresInHours?: number }
+      recipientEmail,
+      message,
+    } = req.body as {
+      label?: string
+      permissions?: string[]
+      expiresInHours?: number
+      recipientEmail?: string
+      message?: string
+    }
 
-    const contract = await prisma.contract.findFirst({ where: { id: contractId, orgId, deletedAt: null } })
+    const contract = await prisma.contract.findFirst({
+      where:   { id: contractId, orgId, deletedAt: null },
+      include: { org: { select: { name: true } } },
+    })
     if (!contract) return reply.status(404).send({ error: 'Contract not found' })
 
     if (!Array.isArray(permissions)) {
@@ -72,25 +84,60 @@ export async function shareRoutes(app: FastifyInstance) {
     // 'read' is implied: every other capability is reached through the portal view.
     const grantedPermissions = Array.from(new Set(['read', ...permissions]))
 
+    // Optional: deliver the link by email instead of making the user copy it.
+    const inviteEmail = recipientEmail?.trim().toLowerCase() || null
+    if (inviteEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)) {
+      return reply.status(400).send({ error: 'recipientEmail is not a valid email address' })
+    }
+
     // Clamp expiry: 1h min, 720h (30d) max
     const clampedHours = Math.min(Math.max(expiresInHours, 1), 720)
     const expiresAt = new Date(Date.now() + clampedHours * 3600 * 1000)
     const rawToken = crypto.randomBytes(32).toString('hex')
 
     const shareLink = await prisma.contractShareLink.create({
-      data: { orgId, contractId, token: rawToken, label, permissions: grantedPermissions, expiresAt, createdById: userId },
+      data: {
+        orgId, contractId, token: rawToken, label,
+        permissions: grantedPermissions, expiresAt, createdById: userId,
+        // Recorded even though the email send is fire-and-forget: the
+        // inbound-email allow-list uses it to recognise this counterparty
+        // if they email a redline back.
+        invitedEmail: inviteEmail,
+      },
     })
 
     const portalJwt = signPortalToken(
       { token: rawToken, contractId, orgId, permissions: grantedPermissions },
       clampedHours * 3600,
     )
+    const portalUrl = `${FRONTEND_URL}/portal/${portalJwt}`
 
-    createAuditEvent({ orgId, userId, action: AuditAction.LINK_SHARED, resourceType: 'contract', resourceId: contractId, metadata: { shareLinkId: shareLink.id, permissions: grantedPermissions, expiresAt } }).catch(() => {})
+    if (inviteEmail) {
+      const sender = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } })
+      sendShareLinkEmail({
+        to:            inviteEmail,
+        portalUrl,
+        contractTitle: contract.title,
+        contractType:  contract.type,
+        orgName:       contract.org?.name ?? 'draftLegal',
+        senderName:    sender?.name ?? null,
+        message:       message?.trim() || null,
+        expiresAt,
+        canUpload:     grantedPermissions.includes('upload') || grantedPermissions.includes('edit'),
+      })
+    }
+
+    createAuditEvent({ orgId, userId, action: AuditAction.LINK_SHARED, resourceType: 'contract', resourceId: contractId, metadata: { shareLinkId: shareLink.id, permissions: grantedPermissions, expiresAt, emailedTo: inviteEmail } }).catch(() => {})
 
     return reply.status(201).send({
       shareLink,
-      portalUrl: `${FRONTEND_URL}/portal/${portalJwt}`,
+      portalUrl,
+      emailedTo: inviteEmail,
+      // Report honestly whether an email could actually go out. Without SMTP
+      // configured the send is a no-op (the link is only logged server-side),
+      // and telling the user "sent" would be a lie — the caller uses this to
+      // say "copy this manually" instead.
+      emailDelivered: inviteEmail ? Boolean(process.env.SMTP_HOST) : null,
     })
   })
 

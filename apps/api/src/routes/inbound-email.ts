@@ -147,9 +147,23 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
       senderReason = 'counterparty_email_match'
     }
     if (!allowed) {
-      // Accept if a portal share-link was issued with this email in metadata —
-      // we don't currently store invite emails on links so this falls through
-      // to denial. Future: store invitee email on link.label or a new column.
+      // Accept if a still-valid portal share link was emailed to this address.
+      // Share links now record invitedEmail, so a counterparty invited by link
+      // (rather than registered as the contract's counterparty) can email a
+      // redline back. Revoked/expired links do not count.
+      const invited = await prisma.contractShareLink.findFirst({
+        where: {
+          contractId,
+          invitedEmail: senderEmail,
+          revokedAt:    null,
+          expiresAt:    { gt: new Date() },
+        },
+        select: { id: true },
+      })
+      if (invited) {
+        allowed = true
+        senderReason = 'share_link_invite_match'
+      }
     }
     if (!allowed) {
       return reply.status(403).send({
