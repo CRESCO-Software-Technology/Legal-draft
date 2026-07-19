@@ -14,7 +14,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { FastifyAdapter } from '@bull-board/fastify'
 
 import { redis } from './lib/redis.js'
-import { documentQueue, agentQueue, notificationQueue, scanQueue, webhookQueue } from './lib/queue.js'
+import { documentQueue, agentQueue, notificationQueue, scanQueue, webhookQueue, signingQueue } from './lib/queue.js'
 import { ensureContractIndex } from './lib/elasticsearch.js'
 import { ensureBucket } from './lib/storage.js'
 import { authRoutes } from './routes/auth.js'
@@ -198,7 +198,7 @@ export async function buildApp() {
     // @bull-board v5 + bullmq v5 have benign generic-type friction on the
     // BullMQAdapter → BaseAdapter assignment; the imports are already
     // untyped (@ts-ignore above). Runtime is correct.
-    queues: [new BullMQAdapter(documentQueue), new BullMQAdapter(agentQueue), new BullMQAdapter(notificationQueue), new BullMQAdapter(scanQueue), new BullMQAdapter(webhookQueue)] as any,
+    queues: [new BullMQAdapter(documentQueue), new BullMQAdapter(agentQueue), new BullMQAdapter(notificationQueue), new BullMQAdapter(scanQueue), new BullMQAdapter(webhookQueue), new BullMQAdapter(signingQueue)] as any,
     serverAdapter: bullBoardAdapter,
   })
   app.addHook('onRequest', async (req, reply) => {

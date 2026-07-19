@@ -10,6 +10,10 @@ export const agentQueue       = new Queue('agents',        { connection: redis }
 export const scanQueue        = new Queue('scans',         { connection: redis })
 // P10A — webhook delivery queue
 export const webhookQueue     = new Queue('webhooks',      { connection: redis })
+// Sealing an executed contract into a signed PDF. Its own queue so a slow or
+// failing seal can't hold up document parsing, and so retries are visible
+// separately in Bull Board.
+export const signingQueue     = new Queue('signing',       { connection: redis })
 
 // ─── Event bus (Redis Streams) ───────────────────────────────────────────────
 
@@ -245,6 +249,30 @@ export function queueDraftContract(payload: DraftContractJob): void {
     attempts: 2,
     backoff: { type: 'exponential', delay: 5000 },
   }).catch(err => console.warn('[queue] failed to enqueue draft-contract:', err.message))
+}
+
+/**
+ * Seal an executed contract into its signed PDF and store it as a new version.
+ *
+ * Deliberately retried: this used to be a fire-and-forget IIFE, so a transient
+ * S3/Gotenberg/cert failure left the contract EXECUTED with no signed document
+ * and no way to recover. The handler is idempotent (deterministic signed key),
+ * so re-running a succeeded job is a no-op.
+ *
+ * Only the id is carried — the worker re-reads current state rather than
+ * trusting a payload snapshot that may be stale by the time it runs.
+ */
+export interface SealSignedPdfJob {
+  signatureRequestId: string
+}
+export function queueSealSignedPdf(payload: SealSignedPdfJob): void {
+  signingQueue.add('seal-signed-pdf', payload, {
+    attempts: 5,
+    backoff:  { type: 'exponential', delay: 15000 },
+    // Deterministic id — if the signing route somehow fires twice for the same
+    // request, BullMQ dedupes instead of racing two seals.
+    jobId:    `seal-${payload.signatureRequestId}`,
+  }).catch(err => console.warn('[queue] failed to enqueue seal-signed-pdf:', err.message))
 }
 
 /** In-app notification (+ optional email) — written to Notification table. */

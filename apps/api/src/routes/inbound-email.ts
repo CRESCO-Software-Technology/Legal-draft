@@ -13,7 +13,9 @@
  * Sender validation: by default we accept the sender's address only if
  * (a) it matches a previously-issued portal share-link's external email,
  * (b) it matches the contract's counterparty.email, OR
- * (c) INBOUND_EMAIL_ALLOW_ALL=1 in env (dev-only). Otherwise → 403.
+ * (c) INBOUND_EMAIL_ALLOW_ALL=1 in env. Otherwise → 403.
+ * (c) is a dev convenience and is IGNORED in production (it would otherwise
+ * let any holder of the shared secret post into any contract in any org).
  *
  * Auth: shared-secret header `x-inbound-secret` must match
  * INBOUND_EMAIL_SECRET. SendGrid lets you configure this via Inbound
@@ -58,10 +60,13 @@ function extractContractTag(toAddress: string): string | null {
   return match ? match[1] : null
 }
 
+// Legacy 'application/msword' (.doc) is deliberately absent: the extraction
+// pipeline (lib/document.ts) has no OLE reader, so such an attachment would be
+// stored and then fail parsing. Better to skip it and report no usable
+// attachment than to land a version that can never be read or diffed.
 const ALLOWED_MIMES = new Set([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
 ])
 
 export async function inboundEmailRoutes(app: FastifyInstance) {
@@ -93,8 +98,14 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
     if (!contractId) {
       return reply.status(400).send({ error: 'Could not extract contract id from To: address. Expected format: contracts+<id>@…' })
     }
-    const contract = await prisma.contract.findUnique({
-      where: { id: contractId },
+    // Soft-delete is filtered in the query rather than after the fetch, matching
+    // how every other contract lookup in the codebase is written. Note there is
+    // deliberately no org filter here: this is an unauthenticated webhook with
+    // no requesting org, and orgId is derived from the resolved contract. Real
+    // per-org isolation would need per-org inbound addresses or secrets — see
+    // the sender-validation note below for what actually gates access today.
+    const contract = await prisma.contract.findFirst({
+      where: { id: contractId, deletedAt: null },
       include: {
         counterparty: { select: { id: true, email: true, name: true } },
         // Needed to notify the owner that a revision arrived (and to give the
@@ -102,7 +113,7 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
         owner:        { select: { email: true } },
       },
     })
-    if (!contract || contract.deletedAt) {
+    if (!contract) {
       return reply.status(404).send({ error: 'Contract not found' })
     }
     if (contract.status === 'EXECUTED') {
@@ -112,7 +123,22 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
     // Sender allow-list: see if the sender was previously emailed via a
     // share link or matches the registered counterparty.
     const senderEmail = body.from.toLowerCase()
-    const allowAll = process.env.INBOUND_EMAIL_ALLOW_ALL === '1'
+
+    // INBOUND_EMAIL_ALLOW_ALL switches off sender validation entirely, which
+    // would let anyone holding the shared secret inject a document into ANY
+    // contract in ANY org — the one genuine cross-tenant path on this route.
+    // It is a dev convenience, so refuse to honour it in production even when
+    // it is set, rather than trusting the env to be configured correctly.
+    // Same fail-closed posture as the signing-cert dev fallback.
+    const isProduction = process.env.NODE_ENV === 'production'
+    const allowAllRequested = process.env.INBOUND_EMAIL_ALLOW_ALL === '1'
+    if (allowAllRequested && isProduction) {
+      req.log.error(
+        '[inbound-email] INBOUND_EMAIL_ALLOW_ALL is set in production and is being IGNORED — sender validation remains enforced',
+      )
+    }
+    const allowAll = allowAllRequested && !isProduction
+
     let allowed = allowAll
     let senderReason = allowAll ? 'allow_all_dev' : 'unknown'
 
@@ -127,7 +153,10 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
     }
     if (!allowed) {
       return reply.status(403).send({
-        error: `Sender ${senderEmail} is not authorised on this contract. Add them as the counterparty or set INBOUND_EMAIL_ALLOW_ALL=1 (dev only).`,
+        // Don't advertise the dev-only bypass to external callers in production.
+        error: isProduction
+          ? `Sender ${senderEmail} is not authorised on this contract.`
+          : `Sender ${senderEmail} is not authorised on this contract. Add them as the counterparty or set INBOUND_EMAIL_ALLOW_ALL=1 (dev only).`,
         sender_reason: senderReason,
       })
     }

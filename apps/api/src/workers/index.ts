@@ -6,6 +6,8 @@ export { notificationWorker } from './notification.worker.js'
 export { scanWorker } from './scan.worker.js'
 // P10A — webhook delivery
 export { webhookWorker } from './webhook.worker.js'
+// Retryable sealing of executed contracts into their signed PDF
+export { signingWorker } from './signing.worker.js'
 
 // ─── Stuck-contract recovery ─────────────────────────────────────────────────
 // Contracts stuck in an in-progress status (e.g. agents service restarted

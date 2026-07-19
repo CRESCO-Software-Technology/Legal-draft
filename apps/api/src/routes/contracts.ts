@@ -399,13 +399,22 @@ export async function contractRoutes(app: FastifyInstance) {
       return null
     }
     const detected = detectBinaryType(fileBuffer)
+    // Legacy .doc is detectable, but the extraction pipeline has no OLE reader
+    // (lib/document.ts handles PDF/DOCX/TXT and throws on anything else).
+    // Accepting it meant the upload succeeded and analysis then failed with an
+    // opaque "Unsupported file type" — reject up front with a fix instead.
+    if (detected === 'application/msword') {
+      return reply.status(415).send({
+        detail: 'Legacy .doc files are not supported. Open the file in Word, save it as .docx, and upload again.',
+      })
+    }
     if (detected) {
       mimeType = detected // trust the bytes, not the client
     } else if ((mimeType === 'text/plain' || mimeType === '') && fileBuffer.length > 0) {
       mimeType = 'text/plain'
     } else {
       return reply.status(415).send({
-        detail: 'Unsupported or mismatched file type. Allowed: PDF, DOCX, DOC, TXT.',
+        detail: 'Unsupported or mismatched file type. Allowed: PDF, DOCX, TXT.',
       })
     }
 

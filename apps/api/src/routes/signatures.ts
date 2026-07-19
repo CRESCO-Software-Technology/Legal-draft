@@ -37,9 +37,7 @@ import { requirePermission } from '../middleware/permissions.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { AuditAction } from '@clm/types'
 import { sendSigningEmailForSigner } from '../lib/signing-email.js'
-import { generateAndStoreSignedPdf } from '../lib/pdf-signing.js'
-import { renderHtmlToPdfAndStore } from '../lib/gotenberg.js'
-import { queueSigningReminder } from '../lib/queue.js'
+import { queueSigningReminder, queueSealSignedPdf } from '../lib/queue.js'
 import { extractObligationsForContract, CostCapExceededError } from '../lib/obligation-extract.js'
 import { fireWebhook } from '../lib/webhook-events.js'
 
@@ -477,109 +475,13 @@ export async function signatureRoutes(app: FastifyInstance) {
         })
 
         // ── PDF binding (Step 6) ───────────────────────────────────
-        // Pull the canonical PDF for the signed version (renderedPdfKey
-        // wins per A.5; falls back to the original upload's s3Key).
-        // pdf-lib appends a signature certificate page; the result is
-        // uploaded under signed/<contractId>/<srId>.pdf and saved as a
-        // new ContractVersion (versionNumber++) which becomes the
-        // canonical for the contract going forward.
-        ;(async () => {
-          try {
-            const ver = await prisma.contractVersion.findUnique({
-              where: { id: sr.versionId },
-              select: { id: true, versionNumber: true, s3Key: true, renderedPdfKey: true, plainText: true, htmlContent: true },
-            })
-            if (!ver) return
-            let sourceKey = ver.renderedPdfKey ?? ver.s3Key
-            // If neither exists (common for AI-drafted HTML contracts that
-            // never went through the editor's render-on-save path), render
-            // via Gotenberg now from the HTML so we have something to stamp.
-            if (!sourceKey && ver.htmlContent?.trim()) {
-              try {
-                const { s3Key: rk } = await renderHtmlToPdfAndStore({
-                  html: ver.htmlContent,
-                  keyPrefix: `${sr.orgId}/contracts/${sr.contractId}/rendered`,
-                })
-                await prisma.contractVersion.update({
-                  where: { id: ver.id },
-                  data: { renderedPdfKey: rk, renderedAt: new Date() },
-                })
-                sourceKey = rk
-              } catch (err) {
-                app.log.warn({ srId: sr.id, err: (err as Error).message }, 'pdf-signing: failed to render HTML→PDF')
-              }
-            }
-            if (!sourceKey) {
-              app.log.warn({ srId: sr.id }, 'pdf-signing: no source PDF for version — skipped certificate generation')
-              return
-            }
-            const cMeta = await prisma.contract.findUnique({
-              where: { id: sr.contractId },
-              select: { title: true, type: true, org: { select: { name: true } } },
-            })
-            if (!cMeta) return
-            const { signedKey, documentHash } = await generateAndStoreSignedPdf({
-              sourceKey,
-              signedKeyPrefix: `signed/${sr.contractId}`,
-              contractTitle: cMeta.title,
-              contractType: cMeta.type,
-              orgName: cMeta.org?.name ?? 'draftLegal',
-              signatureRequestId: sr.id,
-              completedAt,
-              signers: fresh!.signers
-                .map(s => ({
-                  name: s.name, role: s.role, email: s.email,
-                  signedName: s.signedName, signedAt: s.signedAt,
-                  signedIp: s.signedIp, signOrder: s.signOrder,
-                }))
-                .sort((a, b) => (a.signOrder - b.signOrder) || ((a.signedAt?.getTime() ?? 0) - (b.signedAt?.getTime() ?? 0))),
-            })
-
-            const nSigners = fresh!.signers.length
-            const nextVersionNumber = (ver.versionNumber ?? 0) + 1
-            const newVersion = await prisma.contractVersion.create({
-              data: {
-                contractId: sr.contractId,
-                versionNumber: nextVersionNumber,
-                htmlContent: ver.htmlContent ?? '',
-                plainText: ver.plainText ?? '',
-                s3Key: signedKey,
-                mimeType: 'application/pdf',
-                changeNote: `Signed by ${nSigners} signer${nSigners === 1 ? '' : 's'} — sealed with PAdES/X.509 (SHA-256 ${documentHash.slice(0, 12)}…)`,
-                // Wave 2.7 — the tamper-evidence hash of the sealed PDF, so the
-                // executed document can be independently verified later.
-                metadata: {
-                  _signature: {
-                    sha256: documentHash,
-                    algorithm: 'SHA-256',
-                    format: 'PAdES/X.509 (adbe.pkcs7.detached)',
-                    sealedAt: completedAt.toISOString(),
-                    signatureRequestId: sr.id,
-                  },
-                },
-                createdById: sr.createdById,
-              },
-            })
-            // Anchor the seal hash in the tamper-evident audit chain too.
-            await createAuditEvent({
-              orgId: sr.orgId,
-              userId: sr.createdById,
-              action: AuditAction.SIGNATURE_COMPLETED,
-              resourceType: 'contract',
-              resourceId: sr.contractId,
-              metadata: { event: 'document_sealed', sha256: documentHash, algorithm: 'SHA-256', signatureRequestId: sr.id },
-            }).catch(() => { /* audit best-effort; seal already stored on the version */ })
-            await prisma.contract.update({
-              where: { id: sr.contractId },
-              data: { currentVersionId: newVersion.id },
-            })
-            app.log.info({ srId: sr.id, signedKey, versionId: newVersion.id }, 'pdf-signing: signed PDF stored')
-          } catch (err) {
-            // Don't fail the signing call — the legal record exists in
-            // the audit trail + Signer rows even without a stamped PDF.
-            app.log.warn({ err: (err as Error).message, srId: sr.id }, 'pdf-signing: failed to generate certificate')
-          }
-        })().catch(() => { /* swallow */ })
+        // Queue the seal rather than doing it inline. The signed PDF is a
+        // legally significant artefact, so it must survive a transient S3 /
+        // Gotenberg / signing-cert failure: this used to be a fire-and-forget
+        // IIFE with swallowed errors, which could leave the contract EXECUTED
+        // with no sealed document and no way to recover. The worker re-reads
+        // state and is idempotent, so retries are safe.
+        queueSealSignedPdf({ signatureRequestId: sr.id })
 
         // ── P8 Step 2: auto-extract obligations on signature completion ──
         // Fire-and-forget — the signed contract becomes the system of
