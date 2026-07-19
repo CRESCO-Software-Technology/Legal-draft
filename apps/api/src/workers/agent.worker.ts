@@ -380,19 +380,22 @@ async function handleRedlineAnalysis(data: RedlineAnalysisJob): Promise<void> {
 // playbook position at all.
 
 async function handlePlaybookReview(data: PlaybookReviewJob): Promise<void> {
-  const { contractId, orgId } = data
+  const { contractId, orgId, versionId } = data
 
   const contract = await prisma.contract.findFirst({
     where:  { id: contractId, orgId, deletedAt: null },
-    select: { id: true, type: true, currentVersionId: true, metadata: true },
+    select: { id: true, type: true },
   })
-  if (!contract?.currentVersionId) {
-    console.info('[agent-worker] playbook-review skip contractId=%s — no current version', contractId)
+  if (!contract) {
+    console.info('[agent-worker] playbook-review skip contractId=%s — contract gone', contractId)
     return
   }
 
+  // Review the version that was just extracted, not whatever is "current" by
+  // the time this runs — the pointer may have moved on, and the stamp below
+  // must describe the document actually scored.
   const clauses = await prisma.contractClause.findMany({
-    where:   { versionId: contract.currentVersionId, isSubChunk: false },
+    where:   { versionId, isSubChunk: false },
     select:  { id: true, clauseType: true, content: true, sectionRef: true },
     orderBy: { id: 'asc' },
   })
@@ -445,7 +448,15 @@ async function handlePlaybookReview(data: PlaybookReviewJob): Promise<void> {
     playbookPositions: number
   }
 
-  const existing = (contract.metadata as Record<string, unknown> | null) ?? {}
+  // Re-read metadata immediately before merging. The LLM round-trip above can
+  // take tens of seconds, and anything written to contract.metadata in that
+  // window (e.g. POST /:id/redline setting _redlineStatus) would be silently
+  // clobbered by a snapshot taken before the call.
+  const fresh = await prisma.contract.findUnique({
+    where:  { id: contractId },
+    select: { metadata: true },
+  })
+  const existing = (fresh?.metadata as Record<string, unknown> | null) ?? {}
   await prisma.contract.update({
     where: { id: contractId },
     data:  {
@@ -454,7 +465,7 @@ async function handlePlaybookReview(data: PlaybookReviewJob): Promise<void> {
         _playbookReview: {
           ...result,
           reviewedAt: new Date().toISOString(),
-          versionId:  contract.currentVersionId,
+          versionId,
         },
       } as never,
     },

@@ -842,26 +842,50 @@ export async function contractRoutes(app: FastifyInstance) {
       rationale?:    string
       changes?:      Array<{ before: string; after: string; reason?: string }>
     }
-    // This writes into the contract body, so validate rather than trusting the
-    // cast — the same bounds the internal schema enforces.
-    const proposedText = typeof body.proposedText === 'string' ? body.proposedText.trim() : ''
-    if (!proposedText) {
+    // This writes into the contract body, so validate rather than trust the
+    // cast. Bounds mirror RedlineApplySchema on the internal route — both paths
+    // reach the same splice, so they must not accept different things.
+    const rawText = typeof body.proposedText === 'string' ? body.proposedText : ''
+    if (!rawText.trim()) {
       return reply.status(400).send({ detail: 'proposedText is required' })
     }
-    if (proposedText.length > 20_000) {
+    if (rawText.length > 20_000) {
       return reply.status(400).send({ detail: 'proposedText exceeds the 20,000 character limit' })
     }
+    // Emptiness is judged on the trimmed value, but the UNTRIMMED string is
+    // spliced — the internal route splices verbatim, and trimming here would
+    // make the two paths write different bytes for the same input.
+    const proposedText = rawText
+
+    const AGGRESSION = ['least', 'moderate', 'aggressive']
+    if (body.aggression !== undefined && !AGGRESSION.includes(body.aggression)) {
+      return reply.status(400).send({ detail: `aggression must be one of: ${AGGRESSION.join(', ')}` })
+    }
+    if (typeof body.rationale === 'string' && body.rationale.length > 2_000) {
+      return reply.status(400).send({ detail: 'rationale exceeds the 2,000 character limit' })
+    }
+    // aggression and rationale both land in changeNote and metadata, so cap
+    // them here rather than letting unbounded text into the version record.
+    const changes = Array.isArray(body.changes)
+      ? body.changes.slice(0, 40).map(c => ({
+          before: String(c?.before ?? '').slice(0, 5_000),
+          after:  String(c?.after  ?? '').slice(0, 5_000),
+          reason: c?.reason ? String(c.reason).slice(0, 500) : undefined,
+        }))
+      : undefined
 
     const result = await applyClauseProposal({
       orgId, userId, contractId: id, clauseId,
       proposedText,
-      aggression:   body.aggression,
-      rationale:    body.rationale,
-      changes:      Array.isArray(body.changes) ? body.changes.slice(0, 40) : undefined,
+      aggression: body.aggression,
+      rationale:  body.rationale,
+      changes,
     })
     if (!result.ok) return reply.status(result.status).send({ detail: result.detail })
 
-    await createAuditEvent({
+    // Best-effort: the version is already written and currentVersionId flipped,
+    // so a failed audit write must not turn a successful apply into a 500.
+    createAuditEvent({
       orgId, userId,
       action:       AuditAction.VERSION_CREATED,
       resourceType: 'contract',
@@ -871,7 +895,7 @@ export async function contractRoutes(app: FastifyInstance) {
         newVersionNumber: result.data.newVersionNumber,
         spliced: result.data.spliced,
       },
-    })
+    }).catch(() => {})
 
     return reply.send(result.data)
   })
@@ -1811,15 +1835,19 @@ export async function contractRoutes(app: FastifyInstance) {
     const contract = await prisma.contract.findFirst({ where: { id: contractId, orgId, deletedAt: null } })
     if (!contract) return reply.status(404).send({ error: 'Contract not found' })
 
-    // Cache hit
-    const cached = await prisma.versionDiffCache.findUnique({ where: { v1Id_v2Id: { v1Id, v2Id } } })
-    if (cached) return reply.send({ diffHtml: cached.diffHtml, stats: cached.stats, v1Id, v2Id })
-
+    // Confirm both versions belong to THIS contract before touching the cache.
+    // VersionDiffCache is keyed on [v1Id, v2Id] with no contract component, so
+    // serving a cache hit first let a caller pass their own contractId together
+    // with two version ids from another org's contract and read back that org's
+    // rendered diff HTML.
     const [v1, v2] = await Promise.all([
       prisma.contractVersion.findFirst({ where: { id: v1Id, contractId } }),
       prisma.contractVersion.findFirst({ where: { id: v2Id, contractId } }),
     ])
     if (!v1 || !v2) return reply.status(404).send({ error: 'Version not found' })
+
+    const cached = await prisma.versionDiffCache.findUnique({ where: { v1Id_v2Id: { v1Id, v2Id } } })
+    if (cached) return reply.send({ diffHtml: cached.diffHtml, stats: cached.stats, v1Id, v2Id })
 
     // A version whose text has not been extracted yet (freshly uploaded, or a
     // counterparty turn still moving through the parse pipeline) has

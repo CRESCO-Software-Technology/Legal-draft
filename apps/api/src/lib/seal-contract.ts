@@ -44,9 +44,39 @@ export async function sealSignedContract(signatureRequestId: string): Promise<Se
 
   const existing = await prisma.contractVersion.findFirst({
     where:  { contractId: sr.contractId, s3Key: signedKey },
-    select: { id: true },
+    select: { id: true, versionNumber: true },
   })
-  if (existing) return { status: 'already_sealed', versionId: existing.id }
+  if (existing) {
+    // A previous attempt already produced the sealed version — but it may have
+    // died before repointing the contract at it, because the create / audit /
+    // pointer-update below are three separate awaits rather than one
+    // transaction. Simply returning here would leave the contract EXECUTED
+    // while every "current version" reader (download, portal, compare, index)
+    // serves the UNSIGNED pre-seal document, and the worker would log success
+    // so nothing would alert. So reconcile the pointer instead of bailing.
+    //
+    // Only ever move the pointer FORWARD: a legitimately newer version (e.g. a
+    // counterparty upload after execution) must not be clobbered by a late retry.
+    const contractNow = await prisma.contract.findUnique({
+      where:  { id: sr.contractId },
+      select: { currentVersionId: true },
+    })
+    if (contractNow && contractNow.currentVersionId !== existing.id) {
+      const currentVer = contractNow.currentVersionId
+        ? await prisma.contractVersion.findUnique({
+            where:  { id: contractNow.currentVersionId },
+            select: { versionNumber: true },
+          })
+        : null
+      if ((currentVer?.versionNumber ?? -1) < existing.versionNumber) {
+        await prisma.contract.update({
+          where: { id: sr.contractId },
+          data:  { currentVersionId: existing.id },
+        })
+      }
+    }
+    return { status: 'already_sealed', versionId: existing.id }
+  }
 
   const ver = await prisma.contractVersion.findUnique({
     where:  { id: sr.versionId },

@@ -87,7 +87,16 @@ export async function applyClauseProposal(args: ApplyClauseArgs): Promise<ApplyC
   //      note if the text is no longer present.
   if (!clause) {
     const priorClause = await prisma.contractClause.findFirst({
-      where:  { id: args.clauseId },
+      where: {
+        id: args.clauseId,
+        // Scope to THIS contract. A clause id is globally unique but not
+        // globally private: an unscoped lookup let a caller name another org's
+        // clause and have its text and type written into their own version
+        // metadata and changeNote (which GET /:id/versions returns). Harmless
+        // while this only ran behind the internal-secret hook; not once a
+        // user-facing route reaches it.
+        version: { contractId: contract.id },
+      },
       select: { id: true, clauseType: true, content: true, sectionRef: true },
     })
     if (priorClause) {

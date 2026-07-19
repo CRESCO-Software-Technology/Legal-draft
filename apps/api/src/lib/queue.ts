@@ -219,13 +219,24 @@ export interface NotificationJob {
 export interface PlaybookReviewJob {
   contractId: string
   orgId:      string
+  /** The version that was just extracted — also scopes the job identity. */
+  versionId:  string
 }
 export function queuePlaybookReview(payload: PlaybookReviewJob): void {
   agentQueue.add('playbook-review', payload, {
     attempts: 2,
     backoff: { type: 'exponential', delay: 15000 },
-    // One review per contract in flight — re-analysis re-queues it deliberately.
-    jobId: `playbook-review-${payload.contractId}`,
+    // Keyed on the VERSION, not the contract. BullMQ silently drops an add with
+    // a duplicate jobId (it returns the existing job rather than throwing, so a
+    // .catch here would never see it), and completed jobs are retained, so a
+    // contract-scoped id would claim that key forever: the contract would be
+    // reviewed once and every later version — including the counterparty's
+    // returned redline, the case this feature exists for — would be dropped in
+    // silence while the stored result still pointed at v1.
+    jobId: `playbook-review-${payload.contractId}-${payload.versionId}`,
+    // Don't accumulate keys indefinitely either.
+    removeOnComplete: 100,
+    removeOnFail:     50,
   }).catch(err => console.warn('[queue] failed to enqueue playbook-review:', err.message))
 }
 
@@ -288,10 +299,22 @@ export function queueSealSignedPdf(payload: SealSignedPdfJob): void {
   signingQueue.add('seal-signed-pdf', payload, {
     attempts: 5,
     backoff:  { type: 'exponential', delay: 15000 },
-    // Deterministic id — if the signing route somehow fires twice for the same
-    // request, BullMQ dedupes instead of racing two seals.
+    // Deterministic id: two concurrent seals would each create a version
+    // carrying the same signed s3Key under different versionNumbers (the unique
+    // constraint is on [contractId, versionNumber], not the key), so dedupe at
+    // enqueue rather than relying on the handler's idempotency alone.
+    // Trade-off: once a job has exhausted its retries it keeps this id, so
+    // re-enqueueing is a no-op — recovery is an operator retry from Bull Board,
+    // where the signing queue is registered.
     jobId:    `seal-${payload.signatureRequestId}`,
-  }).catch(err => console.warn('[queue] failed to enqueue seal-signed-pdf:', err.message))
+  }).catch(err =>
+    // Loud: the contract is already EXECUTED by this point, so a dropped
+    // enqueue means the sealed PDF is never produced and nothing else notices.
+    console.error(
+      '[queue] FAILED to enqueue seal-signed-pdf for signatureRequest=%s — contract is executed but will have no sealed PDF until this is retried: %s',
+      payload.signatureRequestId, err.message,
+    ),
+  )
 }
 
 /** In-app notification (+ optional email) — written to Notification table. */

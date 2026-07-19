@@ -208,7 +208,7 @@ async function handleChunkAndIndex(data: ChunkAndIndexJob): Promise<void> {
   // analysis diffs two versions, so it cannot run on a document that has just
   // arrived with a single version. Queued after DONE so the contract is
   // already usable — a failure here leaves analysisStatus untouched.
-  queuePlaybookReview({ contractId, orgId })
+  queuePlaybookReview({ contractId, orgId, versionId })
 
   console.info('[parse-worker] chunk-and-index done for contractId=%s', contractId)
 }

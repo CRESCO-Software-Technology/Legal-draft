@@ -23,8 +23,14 @@ export const signingWorker = new Worker(
     const outcome = await sealSignedContract(signatureRequestId)
 
     if (outcome.status === 'skipped') {
-      // Not an error — these conditions can never succeed, so don't burn retries.
-      console.info('[signing-worker] seal skipped sr=%s: %s', signatureRequestId, outcome.reason)
+      // Not retryable — these conditions can never succeed. But a skip still
+      // means an executed contract has no sealed PDF, which is the exact
+      // failure this job exists to prevent, and the job itself completes green.
+      // Log at warn so it is greppable rather than buried in info.
+      console.warn(
+        '[signing-worker] seal SKIPPED sr=%s — contract may be executed without a sealed PDF: %s',
+        signatureRequestId, outcome.reason,
+      )
     } else if (outcome.status === 'already_sealed') {
       console.info('[signing-worker] seal already present sr=%s version=%s', signatureRequestId, outcome.versionId)
     } else {

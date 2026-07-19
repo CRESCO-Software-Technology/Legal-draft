@@ -224,6 +224,23 @@ export async function portalRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: 'This link does not allow uploads' })
     }
 
+    // Share links are not revoked when a contract executes, and they live up to
+    // 30 days — so without this guard a counterparty could upload against an
+    // already-signed contract, flipping it back to UNDER_NEGOTIATION and
+    // repointing currentVersionId at an unsealed file. The authenticated PATCH
+    // path enforces a transition matrix where EXECUTED may only go to ARCHIVED;
+    // this path bypassed it entirely. Mirrors the inbound-email guard.
+    const target = await prisma.contract.findFirst({
+      where:  { id: payload.contractId, deletedAt: null },
+      select: { status: true },
+    })
+    if (!target) return reply.status(404).send({ error: 'Contract not found' })
+    if (target.status === 'EXECUTED' || target.status === 'ARCHIVED') {
+      return reply.status(409).send({
+        error: 'This contract is already finalised — uploads are closed. Contact the sender if changes are still needed.',
+      })
+    }
+
     const file = await (req as unknown as { file: () => Promise<{ filename: string; mimetype: string; toBuffer: () => Promise<Buffer> } | undefined> }).file()
     if (!file) return reply.status(400).send({ error: 'file is required' })
     const allowedMime = new Set([

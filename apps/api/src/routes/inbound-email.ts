@@ -40,6 +40,7 @@ import { prisma } from '../lib/prisma.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { s3, S3_BUCKET } from '../lib/storage.js'
 import { queueParseDocument, queueNotification } from '../lib/queue.js'
+import { bareAddress, extractContractTag } from '../lib/email-address.js'
 import { AuditAction } from '@clm/types'
 
 const InboundEmailSchema = z.object({
@@ -54,23 +55,9 @@ const InboundEmailSchema = z.object({
   })).default([]),
 })
 
-// Extract the `+tag` from the local part of an address.
-//   contracts+abc123@inbound.foo.com  →  "abc123"
-function extractContractTag(toAddress: string): string | null {
-  const match = toAddress.toLowerCase().match(/^[^@]*\+([^@]+)@/)
-  return match ? match[1] : null
-}
-
-/**
- * Reduce an RFC 5322 address to the bare mailbox.
- *   `Jane Doe <jane@x.com>` → `jane@x.com`
- * Real providers send the display-name form, which the plain email validator
- * rejects outright.
- */
-function bareAddress(v: string): string {
-  const m = v.match(/<([^>]+)>/)
-  return (m ? m[1] : v).trim().toLowerCase()
-}
+// Address parsing lives in lib/email-address.ts with regression tests — both
+// functions gate who may write to a contract, and both have a plausible-looking
+// wrong implementation (see the spoofing cases in email-address.test.ts).
 
 /**
  * Normalise the request body into the JSON envelope the schema expects.
@@ -82,6 +69,14 @@ function bareAddress(v: string): string {
  * (multipart is registered without attachFieldsToBody). A real provider webhook
  * therefore always failed here.
  */
+// Bound what a single webhook call may buffer. Every file part is read fully
+// into memory and then base64-encoded (1.33x), and busboy's `files`/`parts`
+// limits default to Infinity, so without these an attacker holding the shared
+// secret could OOM the process with many large parts. Only the first usable
+// attachment is ever consumed downstream, so a small cap costs nothing.
+const MAX_ATTACHMENTS   = 5
+const MAX_TOTAL_BYTES   = 30 * 1024 * 1024
+
 async function readInboundBody(req: FastifyRequest): Promise<unknown> {
   const isMultipart = typeof (req as { isMultipart?: () => boolean }).isMultipart === 'function'
     && (req as unknown as { isMultipart: () => boolean }).isMultipart()
@@ -89,11 +84,20 @@ async function readInboundBody(req: FastifyRequest): Promise<unknown> {
 
   const fields: Record<string, string> = {}
   const attachments: Array<{ filename: string; contentType: string; contentBase64: string }> = []
+  let totalBytes = 0
 
-  const parts = (req as unknown as { parts: () => AsyncIterable<MultipartPart> }).parts()
+  const parts = (req as unknown as {
+    parts: (o?: unknown) => AsyncIterable<MultipartPart>
+  }).parts({ limits: { files: MAX_ATTACHMENTS, fields: 40 } })
+
   for await (const part of parts) {
     if (part.type === 'file') {
+      if (attachments.length >= MAX_ATTACHMENTS) continue
       const buf = await part.toBuffer()
+      totalBytes += buf.length
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new Error('Inbound email payload exceeds the size limit')
+      }
       attachments.push({
         filename:      part.filename,
         contentType:   part.mimetype,
@@ -104,9 +108,26 @@ async function readInboundBody(req: FastifyRequest): Promise<unknown> {
     }
   }
 
+  // Prefer the SMTP envelope over the headers where the provider supplies it
+  // (SendGrid sends `envelope` as JSON: {"to":[...],"from":"..."}). The envelope
+  // is the actual MAIL FROM / RCPT TO — it is what SPF authenticates, whereas
+  // From:/To: are free text the sender chooses.
+  let envFrom = ''
+  let envTo   = ''
+  if (fields.envelope) {
+    try {
+      const env = JSON.parse(fields.envelope) as { from?: string; to?: string[] | string }
+      if (typeof env.from === 'string') envFrom = env.from
+      const to = Array.isArray(env.to) ? env.to[0] : env.to
+      if (typeof to === 'string') envTo = to
+    } catch {
+      // Malformed envelope — fall back to the headers below.
+    }
+  }
+
   return {
-    to:      fields.to ?? '',
-    from:    fields.from ?? '',
+    to:      envTo   || fields.to   || '',
+    from:    envFrom || fields.from || '',
     subject: fields.subject ?? '',
     text:    fields.text ?? '',
     attachments,
@@ -224,6 +245,10 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
           invitedEmail: senderEmail,
           revokedAt:    null,
           expiresAt:    { gt: new Date() },
+          // The link must actually permit returning a document. Without this a
+          // read-only share becomes an upload channel by another route: the
+          // portal correctly refuses their upload, so they email it instead.
+          permissions:  { hasSome: ['upload', 'edit'] },
         },
         select: { id: true },
       })

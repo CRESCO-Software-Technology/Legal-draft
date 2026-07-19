@@ -90,8 +90,13 @@ export async function shareRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'recipientEmail is not a valid email address' })
     }
 
-    // Clamp expiry: 1h min, 720h (30d) max
-    const clampedHours = Math.min(Math.max(expiresInHours, 1), 720)
+    // Clamp expiry: 1h min, 720h (30d) max. Coerce first — a non-numeric value
+    // would otherwise clamp to NaN and surface as an unhandled 500 from Prisma
+    // when `new Date(NaN)` is written.
+    const requestedHours = Number(expiresInHours)
+    const clampedHours = Number.isFinite(requestedHours)
+      ? Math.min(Math.max(requestedHours, 1), 720)
+      : 168
     const expiresAt = new Date(Date.now() + clampedHours * 3600 * 1000)
     const rawToken = crypto.randomBytes(32).toString('hex')
 
