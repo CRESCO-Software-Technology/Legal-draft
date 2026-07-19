@@ -3,10 +3,10 @@
  * Browse, create, and manage contract templates.
  * Template builder with TipTap section editor + variable definition panel.
  */
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { sanitizeHtml } from '@/lib/sanitize'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit2, Trash2, Eye, FileText, Globe, Lock, Loader2, Search } from 'lucide-react'
+import { Plus, Edit2, Trash2, Eye, FileText, Globe, Lock, Loader2, Search, Upload } from 'lucide-react'
 import { api } from '@/lib/api'
 import { ContractEditor } from '@/components/editor/ContractEditor'
 import type { Template, VariableDef } from '@clm/types'
@@ -429,6 +429,34 @@ export function TemplatesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
   })
 
+  // Create a template from an existing .docx. The server converts it to HTML
+  // and splits it on its heading outline; we then open the result in the
+  // builder so the author reviews the conversion before publishing.
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      // The shared api client defaults to application/json — multipart must be
+      // set explicitly or the server can't parse the body (same as UploadModal).
+      const r = await api.post('/templates/upload', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      return r.data as Template
+    },
+    onSuccess: (created) => {
+      setUploadError(null)
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      setEditTemplate(created)
+      setShowBuilder(true)
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setUploadError(detail ?? 'Upload failed. Please try again.')
+    },
+  })
+
   const rawTemplates: Template[] = data?.data ?? []
   // Client-side sort — easier than threading a query param through
   // every cache key.
@@ -453,15 +481,51 @@ export function TemplatesPage() {
           <h1 className="text-xl font-bold text-gray-900">Templates</h1>
           <p className="text-sm text-gray-500">Contract templates for AI-powered drafting</p>
         </div>
-        <button
-          onClick={() => { setEditTemplate(undefined); setShowBuilder(true) }}
-          data-testid="new-template-btn"
-          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
-        >
-          <Plus className="w-4 h-4" />
-          New Template
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            className="hidden"
+            data-testid="template-upload-input"
+            onChange={e => {
+              const file = e.target.files?.[0]
+              // Reset first so picking the same file twice still fires onChange.
+              e.target.value = ''
+              if (file) { setUploadError(null); uploadMutation.mutate(file) }
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadMutation.isPending}
+            data-testid="upload-template-btn"
+            title="Create a template from an existing .docx"
+            className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >
+            {uploadMutation.isPending
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Upload className="w-4 h-4" />}
+            {uploadMutation.isPending ? 'Converting…' : 'Upload .docx'}
+          </button>
+          <button
+            onClick={() => { setEditTemplate(undefined); setShowBuilder(true) }}
+            data-testid="new-template-btn"
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+          >
+            <Plus className="w-4 h-4" />
+            New Template
+          </button>
+        </div>
       </div>
+
+      {uploadError && (
+        <div
+          data-testid="template-upload-error"
+          className="px-6 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700"
+        >
+          {uploadError}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-100 bg-gray-50">
