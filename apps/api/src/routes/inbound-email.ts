@@ -36,6 +36,7 @@ import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { s3, S3_BUCKET } from '../lib/storage.js'
+import { queueParseDocument, queueNotification } from '../lib/queue.js'
 import { AuditAction } from '@clm/types'
 
 const InboundEmailSchema = z.object({
@@ -94,7 +95,12 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
     }
     const contract = await prisma.contract.findUnique({
       where: { id: contractId },
-      include: { counterparty: { select: { id: true, email: true, name: true } } },
+      include: {
+        counterparty: { select: { id: true, email: true, name: true } },
+        // Needed to notify the owner that a revision arrived (and to give the
+        // notification worker an address for the optional email leg).
+        owner:        { select: { email: true } },
+      },
     })
     if (!contract || contract.deletedAt) {
       return reply.status(404).send({ error: 'Contract not found' })
@@ -190,9 +196,41 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
       },
     })
 
+    // Flip to UNDER_NEGOTIATION, point the contract at the incoming version,
+    // and reset analysisStatus so the parse pipeline extracts the attachment.
+    // currentVersionId and analysisStatus must move together — PENDING is what
+    // makes a not-yet-parsed version render as "Preparing document…".
     await prisma.contract.update({
       where: { id: contractId },
-      data: { status: 'UNDER_NEGOTIATION' },
+      data: {
+        status:           'UNDER_NEGOTIATION',
+        currentVersionId: version.id,
+        analysisStatus:   'PENDING',
+        updatedAt:        new Date(),
+      },
+    })
+
+    // Without this the emailed redline stays blank text forever and cannot
+    // be diffed against the previous version.
+    queueParseDocument({
+      contractId,
+      versionId:  version.id,
+      s3Key,
+      mimeType:   pdfOrDocx.contentType,
+      orgId:      contract.orgId,
+      filename:   pdfOrDocx.filename,
+    })
+
+    // Actually notify the owner — the response below claims this happened.
+    queueNotification({
+      orgId:        contract.orgId,
+      userId:       contract.ownerId,
+      type:         'COUNTERPARTY_VERSION',
+      title:        'Counterparty emailed a revised version',
+      body:         `${senderEmail} emailed a revised version (v${nextVersion}) of "${contract.title}".`,
+      resourceType: 'contract',
+      resourceId:   contractId,
+      email:        contract.owner?.email ?? undefined,
     })
 
     createAuditEvent({

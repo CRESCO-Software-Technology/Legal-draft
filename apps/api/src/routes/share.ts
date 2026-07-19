@@ -23,6 +23,14 @@ function portalSecret(): string {
 }
 const FRONTEND_URL  = process.env.FRONTEND_URL ?? 'http://localhost:5173'
 
+// Canonical portal-link permissions. 'read' is implied on every link — it is
+// the entry point every other capability builds on. 'comment' gates portal
+// commenting (portal.ts:117); 'upload' gates the counterparty revision upload
+// (portal.ts:221, which also still honours 'edit', kept here as a legacy alias).
+// Validated because this array is both persisted AND signed into the portal
+// JWT — unvalidated caller input must reach neither.
+const VALID_PERMISSIONS = new Set(['read', 'comment', 'upload', 'edit'])
+
 export interface PortalTokenPayload {
   type: 'portal'
   token: string           // ContractShareLink.token (DB lookup key)
@@ -54,21 +62,31 @@ export async function shareRoutes(app: FastifyInstance) {
     const contract = await prisma.contract.findFirst({ where: { id: contractId, orgId, deletedAt: null } })
     if (!contract) return reply.status(404).send({ error: 'Contract not found' })
 
+    if (!Array.isArray(permissions)) {
+      return reply.status(400).send({ error: 'permissions must be an array of strings' })
+    }
+    const invalid = permissions.filter(p => !VALID_PERMISSIONS.has(p))
+    if (invalid.length > 0) {
+      return reply.status(400).send({ error: `Unknown permission(s): ${invalid.join(', ')}` })
+    }
+    // 'read' is implied: every other capability is reached through the portal view.
+    const grantedPermissions = Array.from(new Set(['read', ...permissions]))
+
     // Clamp expiry: 1h min, 720h (30d) max
     const clampedHours = Math.min(Math.max(expiresInHours, 1), 720)
     const expiresAt = new Date(Date.now() + clampedHours * 3600 * 1000)
     const rawToken = crypto.randomBytes(32).toString('hex')
 
     const shareLink = await prisma.contractShareLink.create({
-      data: { orgId, contractId, token: rawToken, label, permissions, expiresAt, createdById: userId },
+      data: { orgId, contractId, token: rawToken, label, permissions: grantedPermissions, expiresAt, createdById: userId },
     })
 
     const portalJwt = signPortalToken(
-      { token: rawToken, contractId, orgId, permissions },
+      { token: rawToken, contractId, orgId, permissions: grantedPermissions },
       clampedHours * 3600,
     )
 
-    createAuditEvent({ orgId, userId, action: AuditAction.LINK_SHARED, resourceType: 'contract', resourceId: contractId, metadata: { shareLinkId: shareLink.id, permissions, expiresAt } }).catch(() => {})
+    createAuditEvent({ orgId, userId, action: AuditAction.LINK_SHARED, resourceType: 'contract', resourceId: contractId, metadata: { shareLinkId: shareLink.id, permissions: grantedPermissions, expiresAt } }).catch(() => {})
 
     return reply.status(201).send({
       shareLink,

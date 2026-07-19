@@ -18,6 +18,7 @@ import { prisma } from '../lib/prisma.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { verifyPortalToken } from './share.js'
 import { s3, S3_BUCKET } from '../lib/storage.js'
+import { queueParseDocument, queueNotification } from '../lib/queue.js'
 import { AuditAction } from '@clm/types'
 
 async function resolvePortalToken(portalToken: string) {
@@ -205,9 +206,9 @@ export async function portalRoutes(app: FastifyInstance) {
   //   - createdById:  `portal:<shareLinkId>`  (attribution path)
   //   - changeNote:   "Uploaded by counterparty via portal"
   // The revised file itself is stored as a version `filename`/`fileKey`;
-  // HTML re-extraction happens on the server side in a follow-up job so
-  // the upload returns fast. For V1 we only store the file — the extract
-  // step runs on the next analyze tick.
+  // HTML re-extraction runs asynchronously through the same parse pipeline
+  // the in-app upload uses, so the upload returns fast and the version
+  // becomes diffable once parsing completes.
   app.post('/:portalToken/versions', async (req, reply) => {
     const { portalToken } = req.params as { portalToken: string }
 
@@ -266,8 +267,9 @@ export async function portalRoutes(app: FastifyInstance) {
       return reply.status(502).send({ error: 'Could not store the uploaded file. Please try again.' })
     }
 
-    // NOTE: htmlContent / plainText stay empty — the extraction worker
-    // will fill them in on the next analyze tick.
+    // htmlContent / plainText start empty and are filled in by the parse
+    // worker queued below. Without that job the version stays permanently
+    // blank and undiffable — which is exactly what used to happen here.
     const version = await prisma.contractVersion.create({
       data: {
         contractId:    payload.contractId,
@@ -280,12 +282,53 @@ export async function portalRoutes(app: FastifyInstance) {
       },
     })
 
-    // Flip the contract's status to UNDER_NEGOTIATION so the owner sees
-    // the NegotiationStatusStrip flip to "Waiting on you" on next load.
+    // Flip status to UNDER_NEGOTIATION so the owner sees the
+    // NegotiationStatusStrip move to "Waiting on you", point the contract at
+    // the incoming version, and reset analysisStatus so the parse pipeline
+    // runs. `status` and `analysisStatus` are separate columns — both apply.
+    // These two must move together: currentVersionId on a not-yet-parsed
+    // version renders as "Preparing document…" only because analysisStatus
+    // is PENDING; without it the contract body would read as empty.
     await prisma.contract.update({
       where: { id: payload.contractId },
-      data:  { status: 'UNDER_NEGOTIATION' },
+      data:  {
+        status:           'UNDER_NEGOTIATION',
+        currentVersionId: version.id,
+        analysisStatus:   'PENDING',
+        updatedAt:        new Date(),
+      },
     })
+
+    // Extract text/HTML from the uploaded file so the owner can actually
+    // diff the counterparty's turn against the previous version.
+    queueParseDocument({
+      contractId: payload.contractId,
+      versionId:  version.id,
+      s3Key,
+      mimeType:   file.mimetype,
+      orgId:      payload.orgId,
+      filename:   file.filename,
+    })
+
+    // Actually notify the owner. The 201 response below tells the counterparty
+    // "the owner has been notified" — until now nothing here made that true,
+    // and the only signal was a passive status flip on next page load.
+    const ownerRef = await prisma.contract.findUnique({
+      where:  { id: payload.contractId },
+      select: { title: true, ownerId: true, owner: { select: { email: true } } },
+    })
+    if (ownerRef) {
+      queueNotification({
+        orgId:        payload.orgId,
+        userId:       ownerRef.ownerId,
+        type:         'COUNTERPARTY_VERSION',
+        title:        'Counterparty returned a revised version',
+        body:         `A revised version (v${nextVersion}) of "${ownerRef.title}" was uploaded via the share link${link.label ? ` — ${link.label}` : ''}.`,
+        resourceType: 'contract',
+        resourceId:   payload.contractId,
+        email:        ownerRef.owner?.email ?? undefined,
+      })
+    }
 
     // P7.6.2 — proper PORTAL_UPLOADED_VERSION action so the counterparty's
     // upload shows up distinctly from a generic view in the audit log.

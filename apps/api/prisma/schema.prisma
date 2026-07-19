@@ -762,7 +762,7 @@ model ContractShareLink {
   contractId   String
   token        String    @unique // 32-byte random hex — embedded in portal JWT
   label        String?
-  permissions  String[]  @default(["read"]) // "read" | "comment" | "sign"
+  permissions  String[]  @default(["read"]) // "read" | "comment" | "upload" (legacy alias: "edit")
   expiresAt    DateTime
   viewCount    Int       @default(0)
   lastViewedAt DateTime?

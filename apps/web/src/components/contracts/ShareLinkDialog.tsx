@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Link, Copy, Check, X, Trash2, Loader2, Eye, MessageSquare } from 'lucide-react'
+import { Link, Copy, Check, X, Trash2, Loader2, Eye, MessageSquare, Upload } from 'lucide-react'
 
 interface ShareLink {
   id: string
@@ -37,6 +37,7 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
   const [label, setLabel] = useState('')
   const [expiresInHours, setExpiresInHours] = useState(168)
   const [canComment, setCanComment] = useState(false)
+  const [canUpload, setCanUpload] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [newLinkUrl, setNewLinkUrl] = useState<string | null>(null)
 
@@ -48,7 +49,11 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
   const createLink = useMutation({
     mutationFn: () => api.post(`/contracts/${contractId}/share`, {
       label: label.trim() || undefined,
-      permissions: canComment ? ['read', 'comment'] : ['read'],
+      permissions: [
+        'read',
+        ...(canComment ? ['comment'] : []),
+        ...(canUpload ? ['upload'] : []),
+      ],
       expiresInHours,
     }),
     onSuccess: (res) => {
@@ -56,6 +61,7 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
       setNewLinkUrl(res.data.portalUrl)
       setLabel('')
       setCanComment(false)
+      setCanUpload(false)
     },
   })
 
@@ -156,7 +162,25 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
                     Comment — add comments
                   </div>
                 </label>
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={canUpload}
+                    onChange={e => setCanUpload(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="flex items-center gap-1.5 text-sm text-gray-700">
+                    <Upload className="h-3.5 w-3.5 text-gray-400" />
+                    Upload — return a revised version
+                  </div>
+                </label>
               </div>
+              {canUpload && (
+                <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                  Lets the counterparty download the document, redline it offline, and
+                  upload it back as a new version for you to review.
+                </p>
+              )}
             </div>
             <Button
               className="w-full"
@@ -186,6 +210,11 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
                     </div>
                     <div className="flex items-center gap-1">
                       <div className="flex gap-1">
+                        {(link.permissions.includes('upload') || link.permissions.includes('edit')) && (
+                          <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                            upload
+                          </span>
+                        )}
                         {link.permissions.includes('comment') && (
                           <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium">
                             comment

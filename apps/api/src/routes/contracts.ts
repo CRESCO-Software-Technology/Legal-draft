@@ -1744,6 +1744,24 @@ export async function contractRoutes(app: FastifyInstance) {
     ])
     if (!v1 || !v2) return reply.status(404).send({ error: 'Version not found' })
 
+    // A version whose text has not been extracted yet (freshly uploaded, or a
+    // counterparty turn still moving through the parse pipeline) has
+    // htmlContent ''. Diffing against '' renders the entire other version as
+    // one giant deletion — worthless — and it then got written into the cache
+    // below, which nothing evicts, so the garbage was served permanently.
+    // Refuse instead; the caller can retry once extraction lands.
+    const pendingVersionIds = [
+      ...(v1.htmlContent?.trim() ? [] : [v1Id]),
+      ...(v2.htmlContent?.trim() ? [] : [v2Id]),
+    ]
+    if (pendingVersionIds.length > 0) {
+      return reply.status(409).send({
+        error:  'Version still processing',
+        detail: 'This version is still being extracted. The comparison will be available once processing finishes.',
+        pendingVersionIds,
+      })
+    }
+
     const diffHtml: string = htmldiff(v1.htmlContent, v2.htmlContent)
 
     // Count insertions / deletions from <ins> and <del> tags

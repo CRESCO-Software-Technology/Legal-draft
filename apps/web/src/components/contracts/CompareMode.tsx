@@ -73,13 +73,19 @@ export function CompareMode({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  const { data: diff, isLoading } = useQuery({
+  const { data: diff, isLoading, error } = useQuery({
     queryKey: ['contract-diff', contractId, olderId, newerId],
     queryFn: () => api
       .get(`/contracts/${contractId}/versions/${olderId}/diff/${newerId}`)
       .then(r => r.data),
     enabled: open && !!olderId && !!newerId && olderId !== newerId,
   })
+
+  // A 409 from the diff endpoint means one version's text has not been
+  // extracted yet (e.g. a counterparty turn still in the parse pipeline).
+  // That's a wait, not a failure — it must not read as "no diff available".
+  const stillProcessing =
+    (error as { response?: { status?: number } } | null)?.response?.status === 409
 
   // Wave 2.1 — per-change accept/reject. Changes come from the diff blob in
   // document order; decisions are keyed by their ids. accept = take theirs,
@@ -245,6 +251,14 @@ export function CompareMode({
           <Centered>
             <Loader2 className="h-5 w-5 animate-spin text-gray-400 mb-2" />
             <p className="text-sm text-gray-500">Computing diff…</p>
+          </Centered>
+        ) : stillProcessing ? (
+          <Centered>
+            <Loader2 className="h-5 w-5 animate-spin text-gray-400 mb-2" />
+            <p className="text-sm text-gray-500 max-w-sm text-center">
+              This version is still being processed. The comparison will be
+              available once extraction finishes.
+            </p>
           </Centered>
         ) : diff?.diffHtml ? (
           <div className="flex gap-4 items-start">

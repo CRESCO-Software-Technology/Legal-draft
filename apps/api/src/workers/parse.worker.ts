@@ -89,6 +89,14 @@ async function handleParseDocument(data: ParseDocumentJob): Promise<void> {
     },
   })
 
+  // This version's text just changed, so any cached diff involving it is now
+  // stale. VersionDiffCache is keyed on version IDs alone, so nothing else
+  // would ever evict these rows — without this they'd outlive the content
+  // they describe.
+  await prisma.versionDiffCache.deleteMany({
+    where: { OR: [{ v1Id: versionId }, { v2Id: versionId }] },
+  })
+
   // Get page count (needed later by detect-binder for auto-split range computation)
   let totalPages: number | undefined
   if (mimeType === 'application/pdf') {
