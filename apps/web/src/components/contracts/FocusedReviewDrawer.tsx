@@ -16,7 +16,7 @@
  * B.5.6 — UI only, local state. B.5.7 persists reviewState to the DB.
  */
 import { useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   AlertTriangle, X, ChevronLeft, ChevronRight, FileEdit, XCircle,
   BookOpen, Circle, MessageCircle, Sparkles,
@@ -63,6 +63,7 @@ function labelClauseType(t: string | null | undefined): string {
 }
 
 export function FocusedReviewDrawer({
+  contractId,
   clauses,
   currentIndex,
   reviewStates,
@@ -74,6 +75,7 @@ export function FocusedReviewDrawer({
   onMarkReviewed,
   onClose,
 }: {
+  contractId: string
   clauses: FocusedClause[]
   currentIndex: number
   reviewStates: Record<string, ReviewState>
@@ -99,6 +101,25 @@ export function FocusedReviewDrawer({
     clause?.clauseType && p.clauseCategory?.name &&
     normalize(p.clauseCategory.name) === normalize(clause.clauseType),
   )
+
+  // Alternative language for this clause, grounded in the org playbook.
+  // On demand rather than automatic: each call is an LLM round-trip, and the
+  // reviewer clicks through many clauses that need no rewrite.
+  const suggest = useMutation({
+    mutationFn: async (clauseId: string) => {
+      const r = await api.post(`/contracts/${contractId}/clauses/${clauseId}/suggest`, {})
+      return r.data as {
+        hasPlaybook: boolean
+        variants: Array<{ aggression: string; proposedText: string; rationale: string }>
+        error?: string
+      }
+    },
+  })
+
+  // Drop any loaded suggestion when the drawer moves to a different clause —
+  // showing one clause's proposed language under another would be dangerous.
+  const clauseId = clause?.id
+  useEffect(() => { suggest.reset() }, [clauseId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard: Esc closes, j/k nav like the rest of the app might adopt.
   useEffect(() => {
@@ -245,31 +266,64 @@ export function FocusedReviewDrawer({
       )}
 
       {/* ── AI SUGGESTION ──────────────────────────────────────────────── */}
-      <Section title="AI suggestion">
-        <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 leading-relaxed max-h-40 overflow-y-auto">
-          {clause.interpretation
-            ? <span className="italic text-gray-500">Suggestion generation lands in B.5.9 (⌘K palette). For now, use "Edit manually" to rewrite.</span>
-            : <span className="italic text-gray-400">No AI suggestion available yet. Use Edit to revise manually.</span>}
-        </div>
-      </Section>
-
-      {/* ── PLAYBOOK REFERENCE ─────────────────────────────────────────── */}
-      <Section title="Playbook reference" icon={<BookOpen className="h-3.5 w-3.5 text-gray-400" />}>
-        <div className="text-sm text-gray-600">
-          <div className="font-medium text-gray-700">Standard Contract Playbook</div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            Link to specific rule pending playbook schema work.
+      <Section title="Alternative language" icon={<BookOpen className="h-3.5 w-3.5 text-gray-400" />}>
+        {suggest.data ? (
+          <div className="space-y-2">
+            {suggest.data.variants.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">
+                {suggest.data.error ?? 'No alternative language was returned for this clause.'}
+              </p>
+            ) : (
+              suggest.data.variants.map((v, i) => (
+                <div key={i} className="rounded-md border border-gray-200 p-2">
+                  <span className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
+                    {v.aggression}
+                  </span>
+                  <p className="mt-1.5 text-xs text-gray-700 whitespace-pre-line">{v.proposedText}</p>
+                  {v.rationale && (
+                    <p className="mt-1 text-[11px] text-gray-400 italic">{v.rationale}</p>
+                  )}
+                </div>
+              ))
+            )}
+            {!suggest.data.hasPlaybook && suggest.data.variants.length > 0 && (
+              // Say so plainly — otherwise this reads as playbook-approved language.
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                No preferred playbook position exists for {labelClauseType(clause.clauseType)},
+                so this is general drafting practice rather than your playbook.
+              </p>
+            )}
           </div>
-        </div>
+        ) : (
+          <>
+            <button
+              onClick={() => suggest.mutate(clause.id)}
+              disabled={suggest.isPending}
+              data-testid="suggest-alternative-btn"
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+            >
+              <Sparkles className="h-4 w-4" />
+              {suggest.isPending ? 'Drafting alternatives…' : 'Suggest alternative language'}
+            </button>
+            {suggest.isError && (
+              <p className="mt-2 text-xs text-red-600">
+                Could not draft alternatives right now. Try again, or use Edit manually.
+              </p>
+            )}
+          </>
+        )}
       </Section>
 
       {/* ── ACTIONS ─────────────────────────────────────────────────────── */}
       <div className="px-5 py-4 border-b space-y-2">
         <button
           onClick={() => onAccept(clause.id)}
+          title="Accept the clause as written and mark it resolved"
           className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
         >
-          <Sparkles className="h-4 w-4" /> Accept AI suggestion
+          {/* Named for what it does: this resolves the clause, it does not
+              write any text into the document. */}
+          <Circle className="h-4 w-4" /> Accept clause as-is
         </button>
         <button
           onClick={() => onEditManually(clause.id)}

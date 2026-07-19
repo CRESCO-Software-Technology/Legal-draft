@@ -23,6 +23,7 @@ import { searchClauses } from '../lib/embeddings.js'
 import { advancedSearch, indexContract } from '../lib/elasticsearch.js'
 import { queueClassifyDocument, queueParseDocument } from '../lib/queue.js'
 import { applyPiiPolicy } from '../lib/pii-policy.js'
+import { proposeClauseAlternatives } from '../lib/clause-propose.js'
 
 const TIERS: Tier[] = ['reasoning', 'default', 'fast', 'embed', 'rerank', 'vision_ocr']
 
@@ -1822,96 +1823,19 @@ export async function internalAiRoutes(app: FastifyInstance) {
     catch (err) {
       return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
     }
-    if (!body.clauseId && !body.clauseType) {
-      return reply.status(400).send({ detail: 'Either clauseId or clauseType is required' })
-    }
-
-    // Load the contract + locate the target clause. clauseId wins; else
-    // pick the first non-sub-chunk clause matching clauseType.
-    const contract = await prisma.contract.findFirst({
-      where: { id: body.contractId, orgId: body.orgId, deletedAt: null },
-      select: { id: true, title: true, type: true, currentVersionId: true },
+    // Shared with the user-facing POST /contracts/:id/clauses/:clauseId/suggest
+    // so the chat agent and the review drawer produce identical proposals.
+    const result = await proposeClauseAlternatives({
+      contractId:   body.contractId,
+      orgId:        body.orgId,
+      clauseId:     body.clauseId,
+      clauseType:   body.clauseType,
+      instructions: body.instructions,
     })
-    if (!contract) return reply.status(404).send({ detail: 'Contract not found' })
-    if (!contract.currentVersionId) {
-      return reply.status(400).send({ detail: 'Contract has no current version' })
+    if (!result.ok) {
+      return reply.status(result.status).send({ detail: result.detail, upstream: result.upstream })
     }
-
-    const clause = body.clauseId
-      ? await prisma.contractClause.findFirst({
-          where: { id: body.clauseId, versionId: contract.currentVersionId },
-        })
-      : await prisma.contractClause.findFirst({
-          where: {
-            versionId: contract.currentVersionId,
-            isSubChunk: false,
-            clauseType: body.clauseType!,
-          },
-          orderBy: { sortOrder: 'asc' },
-        })
-    if (!clause) return reply.status(404).send({ detail: 'Clause not found' })
-
-    // Map clauseType → ClauseCategory → preferred PlaybookPosition.
-    const category = await prisma.clauseCategory.findFirst({
-      where: {
-        orgId: body.orgId,
-        // Same normalisation rule as playbook_check.
-        name: { equals: clause.clauseType.replace(/_/g, ' '), mode: 'insensitive' },
-      },
-      select: { id: true, name: true },
-    })
-    let preferred: { content: string; rules: unknown } | null = null
-    if (category) {
-      const pos = await prisma.playbookPosition.findFirst({
-        where: {
-          orgId: body.orgId,
-          clauseCategoryId: category.id,
-          positionType: 'preferred',
-        },
-        select: { content: true, rules: true },
-      })
-      if (pos) preferred = pos
-    }
-
-    // Fire the Python /redline_propose endpoint.
-    const pyRes = await fetch(`${AGENTS_URL}/redline_propose`, {
-      method:  'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-internal-secret': INTERNAL_SECRET,
-      },
-      body: JSON.stringify({
-        clauseText:         clause.content,
-        clauseType:         clause.clauseType,
-        category:           category?.name,
-        preferredContent:   preferred?.content ?? null,
-        rules:              preferred?.rules ?? null,
-        contractType:       contract.type,
-        instructions:       body.instructions,
-      }),
-    })
-    if (!pyRes.ok) {
-      const err = await pyRes.text()
-      return reply.status(502).send({ detail: 'redline_propose failed', upstream: err.slice(0, 300) })
-    }
-    const proposal = await pyRes.json() as {
-      variants?: Array<{ aggression: string; proposedText: string; rationale: string; changes: Array<{before:string;after:string;reason:string}> }>
-      error?: string
-    }
-
-    return reply.send({
-      contract:    { id: contract.id, title: contract.title, type: contract.type },
-      clause:      {
-        id:         clause.id,
-        clauseType: clause.clauseType,
-        sectionRef: clause.sectionRef,
-        originalText: clause.content,
-      },
-      category:    category ? { id: category.id, name: category.name } : null,
-      hasPlaybook: !!preferred,
-      variants:    proposal.variants ?? [],
-      error:       proposal.error,
-    })
+    return reply.send(result.data)
   })
 
   // ── POST /internal/ai/tools/comment_add (D.3.2) ────────────────────────────

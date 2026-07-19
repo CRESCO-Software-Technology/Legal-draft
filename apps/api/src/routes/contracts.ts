@@ -17,6 +17,7 @@ import { fireWebhook } from '../lib/webhook-events.js'
 import { applyPiiPolicy } from '../lib/pii-policy.js'
 import { assertCostCapNotExceeded, recordCost, estimateCostUsd, CostCapExceededError } from '../lib/costCap.js'
 import { indexContract, deleteContractFromIndex } from '../lib/elasticsearch.js'
+import { proposeClauseAlternatives } from '../lib/clause-propose.js'
 import { storeClauseSegments, searchClauses } from '../lib/embeddings.js'
 import { queueParseDocument, queueClassifyDocument, queueExtractAi, queueChunkAndIndex, queueSplitBinder, queueEmbedContract, queueRedlineAnalysis, queueApprovalSummary, queueNotification, queueDraftContract } from '../lib/queue.js'
 import { checkAutoApprove, resolveApprovers, type WorkflowStepDef } from '../lib/workflow-engine.js'
@@ -806,6 +807,24 @@ export async function contractRoutes(app: FastifyInstance) {
     }
 
     return reply.status(201).send({ stored: clauseSegments?.length ?? 0 })
+  })
+
+  // ── Alternative-language proposals for one clause ───────────────────────
+  // User-facing counterpart to internal-ai's /tools/redline_propose. That route
+  // sits behind the x-internal-secret hook, so the proposer could only ever be
+  // reached when the chat agent chose to call it — the review drawer had no way
+  // to ask for a suggestion, and showed a hardcoded placeholder instead.
+  // Both paths share lib/clause-propose so they can't drift apart.
+  app.post('/:id/clauses/:clauseId/suggest', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
+    const { id, clauseId } = req.params as { id: string; clauseId: string }
+    const { orgId } = req.user
+    const { instructions } = (req.body ?? {}) as { instructions?: string }
+
+    const result = await proposeClauseAlternatives({ contractId: id, orgId, clauseId, instructions })
+    if (!result.ok) {
+      return reply.status(result.status).send({ detail: result.detail, upstream: result.upstream })
+    }
+    return reply.send(result.data)
   })
 
   // ── List clauses for current version ────────────────────────────────────

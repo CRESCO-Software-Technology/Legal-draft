@@ -2717,6 +2717,7 @@ export function ContractDetailPage() {
         if (focusedClauseId && focusedIdx >= 0) {
           return (
             <FocusedReviewDrawer
+              contractId={id!}
               clauses={riskyClauses}
               currentIndex={focusedIdx}
               reviewStates={reviewStates}
