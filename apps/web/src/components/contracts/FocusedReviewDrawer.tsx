@@ -16,7 +16,7 @@
  * B.5.6 — UI only, local state. B.5.7 persists reviewState to the DB.
  */
 import { useEffect } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, X, ChevronLeft, ChevronRight, FileEdit, XCircle,
   BookOpen, Circle, MessageCircle, Sparkles,
@@ -88,6 +88,7 @@ export function FocusedReviewDrawer({
   onClose: () => void
 }) {
   const clause = clauses[currentIndex]
+  const qc = useQueryClient()
 
   // Wave 2.2 — real playbook comparison. Pull the org's playbook positions and
   // match them to this clause's type by category name (replaces the old
@@ -116,10 +117,31 @@ export function FocusedReviewDrawer({
     },
   })
 
+  // Splice a chosen variant into the document as a new version. This is what
+  // "apply" always should have meant — the old Accept button only marked the
+  // clause resolved and wrote no text at all.
+  const applyVariant = useMutation({
+    mutationFn: async (v: { aggression: string; proposedText: string; rationale: string }) => {
+      const r = await api.post(`/contracts/${contractId}/clauses/${clause!.id}/apply`, {
+        proposedText: v.proposedText,
+        aggression:   v.aggression,
+        rationale:    v.rationale,
+      })
+      return r.data as { newVersionNumber: number; spliced: boolean }
+    },
+    onSuccess: () => {
+      // The document body and version list both changed underneath us.
+      qc.invalidateQueries({ queryKey: ['contract', contractId] })
+      qc.invalidateQueries({ queryKey: ['contract-versions', contractId] })
+      qc.invalidateQueries({ queryKey: ['contract-clauses', contractId] })
+      onMarkReviewed(clause!.id)
+    },
+  })
+
   // Drop any loaded suggestion when the drawer moves to a different clause —
   // showing one clause's proposed language under another would be dangerous.
   const clauseId = clause?.id
-  useEffect(() => { suggest.reset() }, [clauseId])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { suggest.reset(); applyVariant.reset() }, [clauseId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard: Esc closes, j/k nav like the rest of the app might adopt.
   useEffect(() => {
@@ -283,6 +305,15 @@ export function FocusedReviewDrawer({
                   {v.rationale && (
                     <p className="mt-1 text-[11px] text-gray-400 italic">{v.rationale}</p>
                   )}
+                  <button
+                    onClick={() => applyVariant.mutate(v)}
+                    disabled={applyVariant.isPending}
+                    data-testid={`apply-variant-${v.aggression}`}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+                  >
+                    <FileEdit className="h-3.5 w-3.5" />
+                    {applyVariant.isPending ? 'Applying…' : 'Apply to document'}
+                  </button>
                 </div>
               ))
             )}

@@ -24,6 +24,7 @@ import { advancedSearch, indexContract } from '../lib/elasticsearch.js'
 import { queueClassifyDocument, queueParseDocument } from '../lib/queue.js'
 import { applyPiiPolicy } from '../lib/pii-policy.js'
 import { proposeClauseAlternatives } from '../lib/clause-propose.js'
+import { applyClauseProposal } from '../lib/clause-apply.js'
 
 const TIERS: Tier[] = ['reasoning', 'default', 'fast', 'embed', 'rerank', 'vision_ocr']
 
@@ -2416,145 +2417,20 @@ export async function internalAiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
     }
 
-    const contract = await prisma.contract.findFirst({
-      where: { id: body.contractId, orgId: body.orgId, deletedAt: null },
-      select: {
-        id: true, title: true, type: true, currentVersionId: true,
-      },
+    // Shared with the user-facing POST /contracts/:id/clauses/:clauseId/apply
+    // so the agent-thread flow and the review drawer splice identically.
+    const applied = await applyClauseProposal({
+      orgId:        body.orgId,
+      userId:       body.userId,
+      contractId:   body.contractId,
+      clauseId:     body.clauseId,
+      proposedText: body.proposedText,
+      aggression:   body.aggression,
+      rationale:    body.rationale,
+      changes:      body.changes,
     })
-    if (!contract) return reply.status(404).send({ detail: 'Contract not found' })
-    if (!contract.currentVersionId) {
-      return reply.status(400).send({ detail: 'Contract has no current version' })
-    }
-    const currentVersion = await prisma.contractVersion.findUnique({
-      where: { id: contract.currentVersionId },
-      select: {
-        id: true, versionNumber: true,
-        htmlContent: true, plainText: true,
-      },
-    })
-    if (!currentVersion) return reply.status(404).send({ detail: 'Current version missing' })
-
-    let clause = await prisma.contractClause.findFirst({
-      where: { id: body.clauseId, versionId: currentVersion.id },
-      select: { id: true, clauseType: true, content: true, sectionRef: true },
-    })
-    // P1.6 — resilience to version churn.
-    //
-    // The UI may hold a clauseId from an earlier version (the editor's
-    // autosave creates new versions without re-running clause extraction,
-    // so the "current" version can have zero clause rows). We cascade:
-    //
-    //   1) Look up by matching (clauseType, sectionRef) on the current
-    //      version — correct when the version has extracted clauses.
-    //   2) Fall back to the prior clause's own data — splice runs against
-    //      version.htmlContent anyway; if the text is still in the HTML
-    //      we replace, else the splice falls through to an amendment note.
-    //
-    // This keeps the user's intent ("apply this redline to the liability
-    // clause") stable across editor autosave churn.
-    if (!clause) {
-      const priorClause = await prisma.contractClause.findFirst({
-        where: { id: body.clauseId },
-        select: { id: true, clauseType: true, content: true, sectionRef: true },
-      })
-      if (priorClause) {
-        const byType = await prisma.contractClause.findFirst({
-          where: {
-            versionId: currentVersion.id,
-            isSubChunk: false,
-            clauseType: priorClause.clauseType,
-            ...(priorClause.sectionRef ? { sectionRef: priorClause.sectionRef } : {}),
-          },
-          orderBy: { sortOrder: 'asc' },
-          select: { id: true, clauseType: true, content: true, sectionRef: true },
-        })
-        // Prefer the current-version row if we found it — its text
-        // matches the current HTML and the splice will hit. Otherwise
-        // use the prior clause; the splice uses .content as the "before"
-        // string, which may or may not still be in the current HTML.
-        clause = byType ?? priorClause
-      }
-    }
-    if (!clause) {
-      return reply.status(404).send({ detail: 'Clause not found on current version' })
-    }
-
-    // Splice: find the clause content verbatim in the HTML/plaintext and
-    // replace. If we can't find it cleanly (content was rewritten after
-    // extraction), append the proposed clause as an addendum instead of
-    // corrupting the doc.
-    const before = clause.content
-    const newParagraph = `<p>${escapeHtml(body.proposedText)}</p>`
-    let nextHtml   = currentVersion.htmlContent
-    let nextPlain  = currentVersion.plainText
-    let spliced = false
-    if (currentVersion.htmlContent.includes(before)) {
-      nextHtml  = currentVersion.htmlContent.replace(before, body.proposedText)
-      spliced = true
-    } else if (currentVersion.htmlContent.includes(escapeHtml(before))) {
-      nextHtml  = currentVersion.htmlContent.replace(escapeHtml(before), escapeHtml(body.proposedText))
-      spliced = true
-    } else {
-      // Fallback — append as an amendment note at the end.
-      nextHtml += `\n<hr/>\n<p><strong>Amendment (via redline_apply):</strong></p>${newParagraph}`
-    }
-    nextPlain = currentVersion.plainText.includes(before)
-      ? currentVersion.plainText.replace(before, body.proposedText)
-      : currentVersion.plainText + '\n\n[Amendment via redline_apply]\n' + body.proposedText
-
-    const nextVersionNumber = currentVersion.versionNumber + 1
-    const aggressionLabel = body.aggression ?? 'custom'
-
-    const newVersion = await prisma.$transaction(async (tx) => {
-      const v = await tx.contractVersion.create({
-        data: {
-          contractId: contract.id,
-          versionNumber: nextVersionNumber,
-          htmlContent: nextHtml,
-          plainText: nextPlain,
-          changeNote: body.rationale
-            ? `redline_apply (${aggressionLabel}): ${body.rationale}`
-            : `redline_apply (${aggressionLabel}) on ${clause.clauseType}`,
-          createdById: body.userId,
-          metadata: {
-            redline: {
-              sourceClauseId: clause.id,
-              clauseType:     clause.clauseType,
-              sectionRef:     clause.sectionRef,
-              originalText:   clause.content,
-              proposedText:   body.proposedText,
-              aggression:     aggressionLabel,
-              rationale:      body.rationale,
-              changes:        body.changes ?? [],
-              spliced,
-              generatedBy:    'redline_apply',
-              appliedAt:      new Date().toISOString(),
-            },
-          },
-        },
-      })
-      await tx.contract.update({
-        where: { id: contract.id },
-        data:  { currentVersionId: v.id },
-      })
-      return v
-    })
-
-    return reply.send({
-      ok:              true,
-      reversible:      true,
-      contractId:      contract.id,
-      previousVersionId: currentVersion.id,
-      newVersionId:    newVersion.id,
-      newVersionNumber: nextVersionNumber,
-      clauseId:        clause.id,
-      spliced,
-      diff: [
-        { field: 'currentVersionId', before: currentVersion.id, after: newVersion.id },
-        { field: 'versionNumber',    before: currentVersion.versionNumber, after: nextVersionNumber },
-      ],
-    })
+    if (!applied.ok) return reply.status(applied.status).send({ detail: applied.detail })
+    return reply.send(applied.data)
   })
 
   // ── POST /internal/ai/tools/redline_apply/undo (P1.5) ──────────────────────
@@ -3652,14 +3528,6 @@ export async function internalAiRoutes(app: FastifyInstance) {
       matrix,
     })
   })
-}
-
-/** Minimal HTML escape for splicing user-supplied text into contract HTML. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
 }
 
 // Minimal HTML → plaintext helper for storing the generated body as

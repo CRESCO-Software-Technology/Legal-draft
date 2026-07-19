@@ -18,6 +18,7 @@ import { applyPiiPolicy } from '../lib/pii-policy.js'
 import { assertCostCapNotExceeded, recordCost, estimateCostUsd, CostCapExceededError } from '../lib/costCap.js'
 import { indexContract, deleteContractFromIndex } from '../lib/elasticsearch.js'
 import { proposeClauseAlternatives } from '../lib/clause-propose.js'
+import { applyClauseProposal } from '../lib/clause-apply.js'
 import { storeClauseSegments, searchClauses } from '../lib/embeddings.js'
 import { queueParseDocument, queueClassifyDocument, queueExtractAi, queueChunkAndIndex, queueSplitBinder, queueEmbedContract, queueRedlineAnalysis, queueApprovalSummary, queueNotification, queueDraftContract } from '../lib/queue.js'
 import { checkAutoApprove, resolveApprovers, type WorkflowStepDef } from '../lib/workflow-engine.js'
@@ -824,6 +825,54 @@ export async function contractRoutes(app: FastifyInstance) {
     if (!result.ok) {
       return reply.status(result.status).send({ detail: result.detail, upstream: result.upstream })
     }
+    return reply.send(result.data)
+  })
+
+  // ── Apply proposed language to one clause ───────────────────────────────
+  // User-facing counterpart to internal-ai's /tools/redline_apply. That route is
+  // internal-only AND the UI path to it went through the agent thread, which
+  // hard-fails without an existing conversation — so a reviewer looking at
+  // proposed language had no way to apply it. Shares lib/clause-apply.
+  app.post('/:id/clauses/:clauseId/apply', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
+    const { id, clauseId } = req.params as { id: string; clauseId: string }
+    const { orgId, sub: userId } = req.user
+    const body = (req.body ?? {}) as {
+      proposedText?: string
+      aggression?:   string
+      rationale?:    string
+      changes?:      Array<{ before: string; after: string; reason?: string }>
+    }
+    // This writes into the contract body, so validate rather than trusting the
+    // cast — the same bounds the internal schema enforces.
+    const proposedText = typeof body.proposedText === 'string' ? body.proposedText.trim() : ''
+    if (!proposedText) {
+      return reply.status(400).send({ detail: 'proposedText is required' })
+    }
+    if (proposedText.length > 20_000) {
+      return reply.status(400).send({ detail: 'proposedText exceeds the 20,000 character limit' })
+    }
+
+    const result = await applyClauseProposal({
+      orgId, userId, contractId: id, clauseId,
+      proposedText,
+      aggression:   body.aggression,
+      rationale:    body.rationale,
+      changes:      Array.isArray(body.changes) ? body.changes.slice(0, 40) : undefined,
+    })
+    if (!result.ok) return reply.status(result.status).send({ detail: result.detail })
+
+    await createAuditEvent({
+      orgId, userId,
+      action:       AuditAction.VERSION_CREATED,
+      resourceType: 'contract',
+      resourceId:   id,
+      metadata: {
+        via: 'clause_apply', clauseId,
+        newVersionNumber: result.data.newVersionNumber,
+        spliced: result.data.spliced,
+      },
+    })
+
     return reply.send(result.data)
   })
 
