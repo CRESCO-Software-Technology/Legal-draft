@@ -124,6 +124,11 @@ export async function shareRoutes(app: FastifyInstance) {
         message:       message?.trim() || null,
         expiresAt,
         canUpload:     grantedPermissions.includes('upload') || grantedPermissions.includes('edit'),
+        // Only offered when inbound email is actually configured — otherwise we
+        // would invite a reply to an address nothing is listening on.
+        replyToAddress: process.env.INBOUND_EMAIL_DOMAIN
+          ? `contracts+${contractId}@${process.env.INBOUND_EMAIL_DOMAIN}`
+          : null,
       })
     }
 

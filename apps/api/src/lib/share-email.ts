@@ -22,6 +22,13 @@ interface SendShareLinkEmailArgs {
   expiresAt: Date
   /** True when the link grants 'upload' — changes the call to action. */
   canUpload: boolean
+  /**
+   * Per-contract inbound address (`contracts+<id>@…`) when inbound email is
+   * configured. Set as Reply-To and mentioned in the body: replying with a
+   * marked-up file lands it as a new version. Without this the address exists
+   * only in the codebase, so no counterparty could ever discover it.
+   */
+  replyToAddress?: string | null
 }
 
 export function sendShareLinkEmail(args: SendShareLinkEmailArgs): void {
@@ -51,6 +58,7 @@ export function sendShareLinkEmail(args: SendShareLinkEmailArgs): void {
     return transporter.sendMail({
       from: process.env.SMTP_FROM ?? process.env.EMAIL_FROM ?? `${args.orgName} <noreply@clm.app>`,
       to:   args.to,
+      ...(args.replyToAddress ? { replyTo: args.replyToAddress } : {}),
       subject,
       text,
       html,
@@ -77,6 +85,10 @@ function renderTextBody(a: SendShareLinkEmailArgs): string {
     ? 'You can read it, download a copy to mark up, and upload your revised version back:'
     : 'You can open and review it here:')
   lines.push(a.portalUrl)
+  if (a.replyToAddress) {
+    lines.push('')
+    lines.push('You can also simply reply to this email with your marked-up copy attached (PDF or DOCX) and it will be filed against this contract automatically.')
+  }
   lines.push('')
   lines.push(`This link expires on ${a.expiresAt.toISOString().slice(0, 10)}.`)
   lines.push('')
@@ -115,6 +127,13 @@ function renderHtmlBody(a: SendShareLinkEmailArgs): string {
         <a href="${a.portalUrl}" style="display:inline-block;background:#2563eb;color:white;text-decoration:none;font-weight:600;padding:11px 22px;border-radius:8px;font-size:15px">Open the document &rarr;</a>
       </p>
       ${uploadHint}
+      ${a.replyToAddress
+        ? `<p style="color:#6b7280;font-size:13px;line-height:1.5;margin:12px 0 0 0">
+             Or just <strong>reply to this email</strong> with your marked-up copy
+             attached (PDF or DOCX) — it will be filed against this contract
+             automatically.
+           </p>`
+        : ''}
       <p style="color:#9ca3af;font-size:12px;margin:18px 0 0 0">If the button doesn't work, paste this URL into your browser:<br/>
         <span style="word-break:break-all">${a.portalUrl}</span>
       </p>

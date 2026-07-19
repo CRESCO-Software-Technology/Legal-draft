@@ -21,8 +21,9 @@
  * INBOUND_EMAIL_SECRET. SendGrid lets you configure this via Inbound
  * Parse → "Username/Password" or via custom headers.
  *
- * Body shape — we accept SendGrid's flat multipart format AND a simpler
- * JSON envelope (for testability + alt providers):
+ * Body shape — both SendGrid's flat multipart/form-data (fields + attachment1..N
+ * as files) and a JSON envelope (for testability + alt providers) are accepted;
+ * multipart is normalised into the envelope below before validation:
  *   {
  *     to:           "contracts+abc123@inbound.example.com",
  *     from:         "counsel@counterparty.com",
@@ -32,7 +33,7 @@
  *                       contentBase64: "JVBERi0xLjQK..." }]
  *   }
  */
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
@@ -59,6 +60,62 @@ function extractContractTag(toAddress: string): string | null {
   const match = toAddress.toLowerCase().match(/^[^@]*\+([^@]+)@/)
   return match ? match[1] : null
 }
+
+/**
+ * Reduce an RFC 5322 address to the bare mailbox.
+ *   `Jane Doe <jane@x.com>` → `jane@x.com`
+ * Real providers send the display-name form, which the plain email validator
+ * rejects outright.
+ */
+function bareAddress(v: string): string {
+  const m = v.match(/<([^>]+)>/)
+  return (m ? m[1] : v).trim().toLowerCase()
+}
+
+/**
+ * Normalise the request body into the JSON envelope the schema expects.
+ *
+ * SendGrid Inbound Parse (and Mailgun's store/forward) POST multipart/form-data
+ * with flat text fields plus attachment1..N as files — NOT the JSON envelope.
+ * The module header claimed both were accepted, but the handler only ever ran
+ * the zod parse against req.body, which is undefined for a multipart POST
+ * (multipart is registered without attachFieldsToBody). A real provider webhook
+ * therefore always failed here.
+ */
+async function readInboundBody(req: FastifyRequest): Promise<unknown> {
+  const isMultipart = typeof (req as { isMultipart?: () => boolean }).isMultipart === 'function'
+    && (req as unknown as { isMultipart: () => boolean }).isMultipart()
+  if (!isMultipart) return req.body
+
+  const fields: Record<string, string> = {}
+  const attachments: Array<{ filename: string; contentType: string; contentBase64: string }> = []
+
+  const parts = (req as unknown as { parts: () => AsyncIterable<MultipartPart> }).parts()
+  for await (const part of parts) {
+    if (part.type === 'file') {
+      const buf = await part.toBuffer()
+      attachments.push({
+        filename:      part.filename,
+        contentType:   part.mimetype,
+        contentBase64: buf.toString('base64'),
+      })
+    } else {
+      fields[part.fieldname] = String(part.value ?? '')
+    }
+  }
+
+  return {
+    to:      fields.to ?? '',
+    from:    fields.from ?? '',
+    subject: fields.subject ?? '',
+    text:    fields.text ?? '',
+    attachments,
+  }
+}
+
+type MultipartPart =
+  | { type: 'file';  fieldname: string; filename: string; mimetype: string; toBuffer: () => Promise<Buffer>; value?: undefined }
+  | { type: 'field'; fieldname: string; value: unknown; filename?: undefined; mimetype?: undefined; toBuffer?: undefined }
 
 // Legacy 'application/msword' (.doc) is deliberately absent: the extraction
 // pipeline (lib/document.ts) has no OLE reader, so such an attachment would be
@@ -92,7 +149,17 @@ export async function inboundEmailRoutes(app: FastifyInstance) {
   })
 
   app.post('/email', async (req, reply) => {
-    const body = InboundEmailSchema.parse(req.body)
+    const raw = await readInboundBody(req)
+    // Providers send display-name addresses (`Jane Doe <jane@x.com>`); normalise
+    // before validation, which requires a bare mailbox.
+    const normalised = (raw && typeof raw === 'object')
+      ? {
+          ...(raw as Record<string, unknown>),
+          to:   bareAddress(String((raw as Record<string, unknown>).to ?? '')),
+          from: bareAddress(String((raw as Record<string, unknown>).from ?? '')),
+        }
+      : raw
+    const body = InboundEmailSchema.parse(normalised)
 
     const contractId = extractContractTag(body.to)
     if (!contractId) {
