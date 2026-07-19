@@ -10,7 +10,7 @@ import { Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { prisma } from '../lib/prisma.js'
 import { queueClassifyDocument, queueExtractAi, queueSplitBinder } from '../lib/queue.js'
-import type { DetectBinderJob, ClassifyDocumentJob, ExtractAiJob, ClassifyRequestJob, SplitBinderJob, RedlineAnalysisJob, ApprovalSummaryJob } from '../lib/queue.js'
+import type { DetectBinderJob, ClassifyDocumentJob, ExtractAiJob, ClassifyRequestJob, SplitBinderJob, RedlineAnalysisJob, ApprovalSummaryJob, PlaybookReviewJob } from '../lib/queue.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { AuditAction } from '@clm/types'
 
@@ -372,6 +372,98 @@ async function handleRedlineAnalysis(data: RedlineAnalysisJob): Promise<void> {
   console.info('[agent-worker] redline-analysis queued in agents service contractId=%s', contractId)
 }
 
+// ─── playbook-review ─────────────────────────────────────────────────────────
+// Single-document playbook scoring, queued automatically once extraction lands.
+// Redline analysis needs two versions to diff, so a contract received from a
+// counterparty could never be scored against the playbook — the automatic
+// pipeline only produced generic per-clause risk ratings and never loaded a
+// playbook position at all.
+
+async function handlePlaybookReview(data: PlaybookReviewJob): Promise<void> {
+  const { contractId, orgId } = data
+
+  const contract = await prisma.contract.findFirst({
+    where:  { id: contractId, orgId, deletedAt: null },
+    select: { id: true, type: true, currentVersionId: true, metadata: true },
+  })
+  if (!contract?.currentVersionId) {
+    console.info('[agent-worker] playbook-review skip contractId=%s — no current version', contractId)
+    return
+  }
+
+  const clauses = await prisma.contractClause.findMany({
+    where:   { versionId: contract.currentVersionId, isSubChunk: false },
+    select:  { id: true, clauseType: true, content: true, sectionRef: true },
+    orderBy: { id: 'asc' },
+  })
+  if (clauses.length === 0) {
+    console.info('[agent-worker] playbook-review skip contractId=%s — no clauses extracted', contractId)
+    return
+  }
+
+  const positions = await prisma.playbookPosition.findMany({
+    where:  { orgId },
+    select: {
+      positionType: true, content: true, notes: true, contractTypes: true,
+      clauseCategory: { select: { name: true } },
+    },
+  })
+  // A position pinned to specific contract types must not be applied to others.
+  const relevant = positions.filter(
+    p => p.contractTypes.length === 0 || p.contractTypes.includes(contract.type),
+  )
+  if (relevant.length === 0) {
+    console.info('[agent-worker] playbook-review skip contractId=%s — no playbook positions for type=%s',
+      contractId, contract.type)
+    return
+  }
+
+  const res = await fetch(`${AGENTS_URL}/playbook-review`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET ?? '' },
+    body:    JSON.stringify({
+      contractId,
+      clauses,
+      playbookPositions: relevant.map(p => ({
+        clauseType:   p.clauseCategory?.name ?? 'other',
+        positionType: p.positionType,
+        content:      p.content,
+        notes:        p.notes,
+      })),
+      contractType: contract.type,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Agents /playbook-review returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+  const result = await res.json() as {
+    findings: unknown[]
+    summary: string
+    requiresHumanGate: boolean
+    clausesReviewed: number
+    playbookPositions: number
+  }
+
+  const existing = (contract.metadata as Record<string, unknown> | null) ?? {}
+  await prisma.contract.update({
+    where: { id: contractId },
+    data:  {
+      metadata: {
+        ...existing,
+        _playbookReview: {
+          ...result,
+          reviewedAt: new Date().toISOString(),
+          versionId:  contract.currentVersionId,
+        },
+      } as never,
+    },
+  })
+
+  console.info('[agent-worker] playbook-review done contractId=%s findings=%d gate=%s',
+    contractId, result.findings.length, result.requiresHumanGate)
+}
+
 // ─── approval-summary ─────────────────────────────────────────────────────────
 
 async function handleApprovalSummary(data: ApprovalSummaryJob): Promise<void> {
@@ -483,6 +575,8 @@ export const agentWorker = new Worker(
       await handleClassifyRequest(job.data as ClassifyRequestJob)
     } else if (job.name === 'redline-analysis') {
       await handleRedlineAnalysis(job.data as RedlineAnalysisJob)
+    } else if (job.name === 'playbook-review') {
+      await handlePlaybookReview(job.data as PlaybookReviewJob)
     } else if (job.name === 'approval-summary') {
       await handleApprovalSummary(job.data as ApprovalSummaryJob)
     } else if (job.name === 'draft-contract') {
@@ -500,6 +594,14 @@ agentWorker.on('failed', async (job, err) => {
   console.error('[worker:agents] ✗ job failed name=%s id=%s attempt=%d/%d err=%s',
     job?.name, job?.id, job?.attemptsMade ?? 0, job?.opts?.attempts ?? 2, err.message)
   const contractId = (job?.data as { contractId?: string })?.contractId
+  // playbook-review is a supplementary pass that runs AFTER extraction has
+  // already succeeded. Failing it (no model key, provider error) must not mark
+  // the contract's analysis FAILED — the document is extracted and perfectly
+  // usable; only the playbook scoring is missing.
+  if (job?.name === 'playbook-review') {
+    console.warn('[worker:agents] playbook-review failed for contractId=%s — leaving analysisStatus untouched', contractId)
+    return
+  }
   if (contractId && job && job.attemptsMade >= (job.opts.attempts ?? 2)) {
     await prisma.contract.update({
       where: { id: contractId },

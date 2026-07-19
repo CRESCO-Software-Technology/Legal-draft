@@ -15,7 +15,7 @@ import { embedContractVersion } from '../lib/embeddings.js'
 import { legalChunkAndStore } from '../lib/legal-chunker.js'
 import { indexContract } from '../lib/elasticsearch.js'
 import { splitPdf, getPdfPageCount } from '../lib/pdf-splitter.js'
-import { queueDetectBinder, queueParseDocument, queueEmbedContract } from '../lib/queue.js'
+import { queueDetectBinder, queueParseDocument, queueEmbedContract, queuePlaybookReview } from '../lib/queue.js'
 import type { ParseDocumentJob, ChunkAndIndexJob, SplitBinderJob } from '../lib/queue.js'
 
 // ─── parse-document ──────────────────────────────────────────────────────────
@@ -202,6 +202,13 @@ async function handleChunkAndIndex(data: ChunkAndIndexJob): Promise<void> {
     where: { id: contractId },
     data: { analysisStatus: 'DONE', analysisError: null },
   })
+
+  // Score the freshly-extracted clauses against the org playbook. This is the
+  // only automatic playbook pass a received contract ever gets: redline
+  // analysis diffs two versions, so it cannot run on a document that has just
+  // arrived with a single version. Queued after DONE so the contract is
+  // already usable — a failure here leaves analysisStatus untouched.
+  queuePlaybookReview({ contractId, orgId })
 
   console.info('[parse-worker] chunk-and-index done for contractId=%s', contractId)
 }

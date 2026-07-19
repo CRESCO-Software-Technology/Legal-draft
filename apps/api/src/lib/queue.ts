@@ -210,6 +210,25 @@ export interface NotificationJob {
   email?:       string  // recipient email address — only used if SMTP_HOST is configured
 }
 
+/**
+ * Playbook review of a SINGLE contract, queued automatically once extraction
+ * finishes. Redline analysis needs two versions to diff, so a contract received
+ * from a counterparty (one version) could never be scored against the playbook;
+ * this is the single-document counterpart.
+ */
+export interface PlaybookReviewJob {
+  contractId: string
+  orgId:      string
+}
+export function queuePlaybookReview(payload: PlaybookReviewJob): void {
+  agentQueue.add('playbook-review', payload, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 15000 },
+    // One review per contract in flight — re-analysis re-queues it deliberately.
+    jobId: `playbook-review-${payload.contractId}`,
+  }).catch(err => console.warn('[queue] failed to enqueue playbook-review:', err.message))
+}
+
 /** Approval AI summary — fetches contract, runs 3-step LangGraph pipeline, patches result back. */
 export function queueApprovalSummary(payload: ApprovalSummaryJob): void {
   agentQueue.add('approval-summary', payload, {
