@@ -59,7 +59,7 @@ export function sendSigningEmail(args: SendSigningEmailArgs): void {
       } : undefined,
     })
     return transporter.sendMail({
-      from: process.env.SMTP_FROM ?? `${args.orgName} <noreply@clm.app>`,
+      from: process.env.SMTP_FROM ?? process.env.EMAIL_FROM ?? `${args.orgName} <noreply@clm.app>`,
       to:   args.to,
       subject,
       text,

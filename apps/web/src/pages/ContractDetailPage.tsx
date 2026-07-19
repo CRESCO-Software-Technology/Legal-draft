@@ -2395,6 +2395,11 @@ export function ContractDetailPage() {
           const rawHtml = latest?.htmlContent?.trim()
             ? latest.htmlContent
             : latest?.plainText?.trim() || ''
+          // A freshly-seeded amendment/draft carries markup-only content like
+          // '<p></p>' — truthy, but with no real text. Strip tags before deciding
+          // emptiness; otherwise the Styled view mounts a blank editor and paints
+          // an empty white page instead of the empty-state card.
+          const hasText = rawHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim().length > 0
           const analyzing = [
             'PENDING', 'PARSING', 'CLASSIFYING', 'EXTRACTING',
             'INDEXING', 'ANALYZING', 'DRAFTING',
@@ -2407,9 +2412,12 @@ export function ContractDetailPage() {
               reason: contract.analysisError ?? undefined,
               onReanalyze: () => reprocess.mutate(),
             }
-          } else if (analyzing && !rawHtml) {
+          } else if (analyzing && !hasText) {
             canvasState = { kind: 'loading' }
-          } else if (!rawHtml) {
+          } else if (!hasText && !isEditing) {
+            // Effectively-empty in view mode → graceful empty state. In edit mode
+            // we fall through to 'ready' so the editable canvas still mounts and
+            // the user can start typing the amendment.
             canvasState = { kind: 'empty' }
           } else {
             canvasState = { kind: 'ready', html: rawHtml }

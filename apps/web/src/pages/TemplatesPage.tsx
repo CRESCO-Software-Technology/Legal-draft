@@ -332,7 +332,7 @@ function TemplateBuilderModal({
                   className="text-base font-semibold border-0 border-b border-gray-200 pb-2 mb-3 w-full outline-none focus:border-blue-400"
                   placeholder="Section title..."
                 />
-                <div className="flex-1">
+                <div className="flex-1 min-h-0">
                   <ContractEditor
                     initialContent={sections[activeSectionIdx].content}
                     onChange={(html) => updateSectionContent(activeSectionIdx, html)}
