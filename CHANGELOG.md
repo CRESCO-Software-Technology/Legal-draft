@@ -11,6 +11,103 @@ the entry for their target version before upgrading (see
 `docs/operations/SELF-HOSTING.md`); upgrades apply forward Prisma migrations
 automatically and never reset data.
 
+## [Unreleased] — Counterparty loop, template upload, playbook review
+
+Closes the external negotiation round-trip (it was roughly 70% built but severed
+in three independent places), adds template creation from an uploaded document,
+and gives a freshly received contract its first automatic playbook pass. A
+review of the branch before merge found five further defects — four of them
+introduced by this work — listed under Fixed/Security rather than folded in
+quietly.
+
+### Added
+- **Counterparty round-trip works end to end.** Share links can now grant
+  `upload`, so a counterparty downloads the DOCX, redlines it offline and
+  uploads it back as a real version. The backend already honoured `upload`, but
+  no UI could produce that permission — the loop was reachable only by
+  hand-crafted API call.
+- **Share links are emailed** (optional `recipientEmail` + note) instead of
+  copy-pasted from a clipboard, and the invited address is recorded on the link.
+- **Template creation from an uploaded `.docx`** — `POST /templates/upload`,
+  split into sections along the document's heading outline, landing as an
+  unpublished draft for review.
+- **Automatic playbook review** of a received contract (`playbook-review` job →
+  agents `/playbook-review`), scoring extracted clauses against the org's
+  positions and reporting only deviations. Redline analysis diffs two versions,
+  so it could never run on a document that has just arrived with one.
+- **Alternative clause language in the review drawer**, with one-click **Apply
+  to document** that splices the text and lands a new version. Both capabilities
+  existed already but were reachable only when the chat agent chose to call them.
+- **Inbound email is usable by a real provider** — multipart payloads and
+  display-name addresses are accepted, and the per-contract reply address is
+  surfaced as Reply-To on share emails.
+
+### Fixed
+- **Returned counterparty documents were never parsed.** Portal upload and
+  inbound email were the only 2 of 11 version-creation paths that created an
+  empty version and skipped the parse job; their comments promised an "analyze
+  tick" that exists nowhere in the repo, so the document stayed blank and
+  undiffable permanently.
+- **The owner was never notified** when a revision arrived, although both
+  endpoints told the counterparty "the owner has been notified".
+- **Diff-cache poisoning.** Diffing against an unparsed version rendered the
+  entire other version as one giant deletion and cached it; `VersionDiffCache`
+  had no eviction anywhere, so that garbage was served forever — even after
+  extraction later succeeded. Now refused with a 409 and evicted when parsing
+  fills a version.
+- **Signed-PDF sealing is retryable.** It ran as a fire-and-forget block with
+  swallowed errors, so a transient S3/Gotenberg/cert failure left a contract
+  `EXECUTED` with no sealed PDF and no recovery path.
+- **Legacy `.doc` is rejected at upload** with guidance to save as `.docx`: it
+  passed magic-byte sniffing but the extractor has no OLE reader, so it uploaded
+  cleanly and then failed analysis opaquely.
+- Template editor no longer breaks on a long pasted clause, and an amendment
+  with no body renders an empty state instead of a blank white page.
+
+### Security
+- **Inbound-email sender and recipient spoofing.** Address parsing took the
+  first `<…>`, but a display name may legally contain a full address, so
+  `"Trusted <counterparty@victim.com>" <attacker@evil.com>` resolved to the
+  victim and passed the sender allow-list while the message genuinely
+  originated from — and passed SPF/DKIM for — the attacker's domain. The same
+  trick on `To:` rerouted mail to an arbitrary contract id. Now strips quoted
+  display-names, takes the last bracket pair, and prefers the provider's SMTP
+  envelope. Regression tests in `apps/api/src/lib/email-address.test.ts`.
+- **`INBOUND_EMAIL_ALLOW_ALL` is now ignored in production.** It disables sender
+  validation entirely and was documented dev-only but enforced nowhere.
+- **A counterparty could overwrite an EXECUTED contract** — portal upload had no
+  status guard, and share links are not revoked on execution (they live up to
+  30 days).
+- **Read-only share links could act as an upload channel by email** — the
+  invited-sender match now requires `upload`/`edit` on the link.
+- **Cross-org clause text leak** through the apply fallback's unscoped clause
+  lookup, which this work made reachable by ordinary authenticated users.
+- **Cross-org cached diff read** — the diff-cache hit path returned before
+  confirming both versions belonged to the requested contract.
+- Share-link permissions are validated against a whitelist before being
+  persisted and signed into the portal JWT; multipart buffering is bounded.
+
+### Migration notes
+- One new migration `20260720000000_share_link_invited_email` (adds a nullable
+  `invitedEmail` column to `contract_share_links`; applied automatically).
+- Optional new env vars: `INBOUND_EMAIL_DOMAIN` (turns on the "reply with your
+  redline" invitation — leave unset while nothing is listening on that address),
+  `INBOUND_EMAIL_SECRET`, and `INBOUND_EMAIL_ALLOW_ALL` (dev only, ignored in
+  production).
+
+### Operator action
+- **Email still sends nothing until SMTP is configured.** `SMTP_HOST` is the
+  gate for signature requests, approval notifications and the new share emails.
+  Set `WEB_BASE_URL` too, or links point at `localhost:5173`. The code reads
+  `SMTP_FROM` and falls back to `EMAIL_FROM`.
+- Inbound email additionally needs a provider inbound-parse webhook pointed at
+  `POST /api/v1/inbound/email`, MX records for `INBOUND_EMAIL_DOMAIN`, and
+  `INBOUND_EMAIL_SECRET` on the service.
+- **Not yet verified end-to-end against a live stack** — see the Known Gaps
+  table in `BUILD_TRACKER.md`.
+
+---
+
 ## [Unreleased] — "Make it real" (Waves 0–5)
 
 The program that took the app from demo-shaped to runnable, secure, honest,
