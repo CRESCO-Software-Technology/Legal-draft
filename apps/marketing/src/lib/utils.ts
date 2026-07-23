@@ -5,6 +5,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export const APP_URL = 'https://app.draft-legal.com'
-export const SITE_URL = 'https://draft-legal.com'
-export const GITHUB_URL = 'https://github.com/AniketTati/draft-legal'
+export const APP_URL = 'https://contracts.cresco.org'
+export const SITE_URL = 'https://contracts.cresco.org'
+export const GITHUB_URL = 'https://github.com/CRESCO-Software-Technology/Legal-draft'
