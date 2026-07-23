@@ -7,6 +7,18 @@ KEEP CHECKING:
 https://github.com/AniketTati/draft-legal/blob/main/BUILD_TRACKER.md
 
 
+BEFORE deploying sync/upstream-jul2026 (Wave 1 will refuse to boot otherwise):
+1. JWT_SECRET + PORTAL_JWT_SECRET — >=32 chars, not change-me*
+2. INTERNAL_SERVICE_SECRET — >=32 chars, not change-me*
+3. SIGNING_CERT_P12_BASE64 + SIGNING_CERT_PASSPHRASE — required in production for PAdES
+4. WEB_BASE_URL / FRONTEND_URL — public app URL (no trailing slash)
+5. Keep SMTP_* and S3_PUBLIC_ENDPOINT as already configured on DO
+6. MinIO bucket must stay private (mc anonymous set none)
+7. Optional inbound: INBOUND_EMAIL_DOMAIN + INBOUND_EMAIL_SECRET
+8. Run Prisma migrate deploy BEFORE restarting API:
+     cd /var/www/draft-legal/apps/api && pnpm exec prisma migrate deploy
+   New migrations: collab_state, pgvector_hnsw_index, share_link_invited_email
+
 
 Push new code
 1. cd /var/www/draft-legal
@@ -28,10 +40,11 @@ Push new code
     = curl -sS http://127.0.0.1:8080/health
     = curl -sS http://127.0.0.1:8081/health
 
-7. one-liner
+7. one-liner (after env + migrate above)
 cd /var/www/draft-legal && \
 git pull && \
 pnpm install && \
+cd apps/api && pnpm exec prisma migrate deploy && cd ../.. && \
 pnpm --filter web build && \
 pnpm --filter marketing build && \
 docker compose up -d postgres redis elasticsearch minio gotenberg && \
