@@ -81,7 +81,7 @@ export const agents: Agent[] = [
     slug: 'invoice',
     name: 'Invoice Agent',
     blurb: 'Reconciles invoices to contracts',
-    capability: 'Matches invoice line items to negotiated rates. Flags overruns and missing PO refs.',
+    capability: "Reconciles invoices against a contract's payment obligations (vendor, amount, due date) and flags mismatches for review.",
     status: 'planned',
   },
   {

@@ -7,11 +7,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Link, Copy, Check, X, Trash2, Loader2, Eye, MessageSquare } from 'lucide-react'
+import { Link, Copy, Check, X, Trash2, Loader2, Eye, MessageSquare, Upload } from 'lucide-react'
 
 interface ShareLink {
   id: string
   label?: string | null
+  invitedEmail?: string | null
   permissions: string[]
   expiresAt: string
   viewCount: number
@@ -37,8 +38,14 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
   const [label, setLabel] = useState('')
   const [expiresInHours, setExpiresInHours] = useState(168)
   const [canComment, setCanComment] = useState(false)
+  const [canUpload, setCanUpload] = useState(false)
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [message, setMessage] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [newLinkUrl, setNewLinkUrl] = useState<string | null>(null)
+  const [emailedTo, setEmailedTo] = useState<string | null>(null)
+  // null = no email requested; false = requested but SMTP isn't configured.
+  const [emailDelivered, setEmailDelivered] = useState<boolean | null>(null)
 
   const linksQuery = useQuery({
     queryKey: ['share-links', contractId],
@@ -48,14 +55,27 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
   const createLink = useMutation({
     mutationFn: () => api.post(`/contracts/${contractId}/share`, {
       label: label.trim() || undefined,
-      permissions: canComment ? ['read', 'comment'] : ['read'],
+      permissions: [
+        'read',
+        ...(canComment ? ['comment'] : []),
+        ...(canUpload ? ['upload'] : []),
+      ],
       expiresInHours,
+      // When set, the server emails the link instead of leaving the user to
+      // copy/paste it into their own mail client.
+      recipientEmail: recipientEmail.trim() || undefined,
+      message: message.trim() || undefined,
     }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['share-links', contractId] })
       setNewLinkUrl(res.data.portalUrl)
+      setEmailedTo(res.data.emailedTo ?? null)
+      setEmailDelivered(res.data.emailDelivered ?? null)
       setLabel('')
       setCanComment(false)
+      setCanUpload(false)
+      setRecipientEmail('')
+      setMessage('')
     },
   })
 
@@ -90,7 +110,17 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
           {/* New link just created */}
           {newLinkUrl && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-              <p className="text-sm font-semibold text-emerald-700 mb-2">Link created! Share this URL:</p>
+              <p className="text-sm font-semibold text-emerald-700 mb-2">
+                {emailedTo && emailDelivered
+                  ? `Link sent to ${emailedTo}`
+                  : 'Link created! Share this URL:'}
+              </p>
+              {emailedTo && emailDelivered === false && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2">
+                  Email isn't configured on this deployment, so nothing was sent to{' '}
+                  <span className="font-medium">{emailedTo}</span>. Copy the URL below and send it yourself.
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <input
                   readOnly
@@ -120,6 +150,34 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
                 className="text-sm"
               />
             </div>
+            <div>
+              <label className="text-xs text-gray-500 font-medium mb-1 block">
+                Send to (optional)
+              </label>
+              <Input
+                type="email"
+                value={recipientEmail}
+                onChange={e => setRecipientEmail(e.target.value)}
+                placeholder="counsel@counterparty.com"
+                data-testid="share-recipient-email"
+                className="text-sm"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">
+                Leave blank to just generate a link you copy yourself.
+              </p>
+            </div>
+            {recipientEmail.trim() && (
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Note (optional)</label>
+                <textarea
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  rows={2}
+                  placeholder="Happy to walk through the redlines this week."
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
             <div>
               <label className="text-xs text-gray-500 font-medium mb-1 block">Expires in</label>
               <select
@@ -156,7 +214,25 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
                     Comment — add comments
                   </div>
                 </label>
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={canUpload}
+                    onChange={e => setCanUpload(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="flex items-center gap-1.5 text-sm text-gray-700">
+                    <Upload className="h-3.5 w-3.5 text-gray-400" />
+                    Upload — return a revised version
+                  </div>
+                </label>
               </div>
+              {canUpload && (
+                <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                  Lets the counterparty download the document, redline it offline, and
+                  upload it back as a new version for you to review.
+                </p>
+              )}
             </div>
             <Button
               className="w-full"
@@ -164,7 +240,7 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
               onClick={() => createLink.mutate()}
             >
               {createLink.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Link className="h-4 w-4 mr-2" />}
-              Generate link
+              {recipientEmail.trim() ? 'Send link' : 'Generate link'}
             </Button>
           </div>
 
@@ -179,6 +255,9 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
                       <p className="text-sm font-medium text-gray-800">
                         {link.label ?? 'Untitled link'}
                       </p>
+                      {link.invitedEmail && (
+                        <p className="text-xs text-gray-500 mt-0.5">Sent to {link.invitedEmail}</p>
+                      )}
                       <p className="text-xs text-gray-400 mt-0.5">
                         Expires {new Date(link.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         {' · '}{link.viewCount} view{link.viewCount !== 1 ? 's' : ''}
@@ -186,6 +265,11 @@ export function ShareLinkDialog({ contractId, onClose }: ShareLinkDialogProps) {
                     </div>
                     <div className="flex items-center gap-1">
                       <div className="flex gap-1">
+                        {(link.permissions.includes('upload') || link.permissions.includes('edit')) && (
+                          <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                            upload
+                          </span>
+                        )}
                         {link.permissions.includes('comment') && (
                           <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium">
                             comment

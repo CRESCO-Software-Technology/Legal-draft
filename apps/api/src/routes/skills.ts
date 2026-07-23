@@ -29,6 +29,9 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireAuth } from '../middleware/auth.js'
+// Wave 1.7 — skills define agent system prompts + tool allowlists (security-
+// sensitive), so create/update/delete are admin-gated; reads stay open.
+import { requirePermission } from '../middleware/permissions.js'
 import { prisma } from '../lib/prisma.js'
 import { SystemRole } from '@clm/types'
 
@@ -134,7 +137,7 @@ export async function skillsRoutes(app: FastifyInstance) {
 
   // ── POST /api/v1/skills ─────────────────────────────────────────────────────
   // Create an org skill. Requires SYSTEM_ADMIN until D.6 lands user skills.
-  app.post('/', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
     const { orgId, sub: userId, roles } = req.user
     if (!isAdmin(roles as string[] | undefined)) {
       return reply.status(403).send({ detail: 'Only admins can create org skills' })
@@ -186,7 +189,7 @@ export async function skillsRoutes(app: FastifyInstance) {
   // ── PATCH /api/v1/skills/:id ────────────────────────────────────────────────
   // Admins can edit any skill (built-in system prompts included). If any
   // versioned field changes, bump version + log the edit.
-  app.patch('/:id', { preHandler: requireAuth }, async (req, reply) => {
+  app.patch('/:id', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
     const { orgId, roles } = req.user
     const { id } = req.params as { id: string }
     if (!isAdmin(roles as string[] | undefined)) {
@@ -227,7 +230,7 @@ export async function skillsRoutes(app: FastifyInstance) {
   // ── DELETE /api/v1/skills/:id ───────────────────────────────────────────────
   // Soft-delete. Built-in skills are refused — an admin who doesn't like a
   // built-in should edit the prompt or unpublish, not delete.
-  app.delete('/:id', { preHandler: requireAuth }, async (req, reply) => {
+  app.delete('/:id', { preHandler: requirePermission('configure', 'organization') }, async (req, reply) => {
     const { orgId, roles } = req.user
     const { id } = req.params as { id: string }
     if (!isAdmin(roles as string[] | undefined)) {

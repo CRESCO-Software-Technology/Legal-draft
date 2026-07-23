@@ -2,15 +2,20 @@
  * collab-server.ts (Phase 10C — real-time collab).
  *
  * Runs a Hocuspocus (Yjs-backed) WebSocket server on a dedicated port
- * (default 3002). Clients connect at ws://localhost:3002 with the
+ * (default 3030). Clients connect at ws://localhost:3030 with the
  * document name `contract:<id>` and a JWT token in the connection
  * params for tenant isolation + cursor presence.
  *
- * Auto-starts on import via startCollabServer(). The HTML content
- * still persists via the editor's existing PATCH-on-save flow; this
- * server only carries live ops between concurrent editors.
+ * Wave 2.4 (2026-07): the live Y.Doc is now PERSISTED via the Hocuspocus
+ * Database extension into the `collab_states` table — concurrent edits survive
+ * a server restart instead of evaporating from memory. The canonical HTML
+ * version still saves via the editor's existing /html-version flow; this server
+ * carries + durably stores the live collaborative ops.
+ *
+ * Auto-starts on import via startCollabServer().
  */
 import { Server } from '@hocuspocus/server'
+import * as Y from 'yjs'
 import { verifyToken } from './jwt.js'
 import { prisma } from './prisma.js'
 
@@ -23,6 +28,24 @@ export function startCollabServer(): Server {
   server = new Server({
     port: PORT,
     name: 'clm-collab',
+
+    // Wave 2.4 — persist the Y.Doc to `collab_states` via v4's document hooks
+    // (yjs binary encode/decode). onStoreDocument is debounced by Hocuspocus.
+    // (The extension-database package isn't v4-compatible, so we use the hooks
+    // directly.)
+    async onLoadDocument({ documentName, document }) {
+      const row = await prisma.collabState.findUnique({ where: { documentName } })
+      if (row?.state) Y.applyUpdate(document, new Uint8Array(row.state))
+      return document
+    },
+    async onStoreDocument({ documentName, document }) {
+      const state = Buffer.from(Y.encodeStateAsUpdate(document))
+      await prisma.collabState.upsert({
+        where: { documentName },
+        create: { documentName, state },
+        update: { state },
+      })
+    },
 
     async onAuthenticate({ token, documentName }) {
       if (!token) throw new Error('Missing token')

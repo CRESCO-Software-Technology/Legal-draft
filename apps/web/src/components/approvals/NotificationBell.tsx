@@ -7,7 +7,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { Bell, CheckCircle2, AlertTriangle, ArrowRight, Clock, X, CalendarClock, Repeat } from 'lucide-react'
+import { Bell, CheckCircle2, AlertTriangle, ArrowRight, Clock, X, CalendarClock, Repeat, FileUp } from 'lucide-react'
 
 interface Notification {
   id:           string
@@ -27,6 +27,8 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
   DELEGATION:       <ArrowRight className="h-3.5 w-3.5 text-blue-500" />,
   OBLIGATION_DUE:   <CalendarClock className="h-3.5 w-3.5 text-amber-500" />,
   RENEWAL_DUE:      <Repeat className="h-3.5 w-3.5 text-amber-600" />,
+  // Counterparty returned a revised version via the portal or inbound email.
+  COUNTERPARTY_VERSION: <FileUp className="h-3.5 w-3.5 text-indigo-500" />,
 }
 
 function relativeTime(d: string) {

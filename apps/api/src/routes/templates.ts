@@ -5,6 +5,7 @@
  * Templates are assembled by the template-engine into contract HTML.
  */
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
@@ -13,6 +14,8 @@ import {
   buildSampleVariables,
   type VariableMap,
 } from '../lib/template-engine.js'
+import { extractDocument } from '../lib/document.js'
+import { splitHtmlIntoSections, stripTags } from '../lib/template-import.js'
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
@@ -131,6 +134,91 @@ export async function templateRoutes(app: FastifyInstance) {
     return reply.status(201).send(template)
   })
 
+  // ── Create a template from an uploaded .docx ──────────────────────────────
+  // Mirrors the contract upload pattern (multipart + magic-byte sniffing) and
+  // reuses the same mammoth-backed converter. Lands as an UNPUBLISHED draft so
+  // the author reviews the conversion before anyone can use it.
+  app.post('/upload', { preHandler: requirePermission('create', 'template') }, async (req, reply) => {
+    const { orgId, sub: userId } = req.user
+
+    const parts = req.parts()
+    let fileBuffer: Buffer | null = null
+    let filename     = ''
+    let name         = ''
+    let description  = ''
+    let contractType = ''
+
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        const chunks: Buffer[] = []
+        for await (const chunk of part.file) chunks.push(chunk)
+        fileBuffer = Buffer.concat(chunks)
+        filename   = part.filename
+      } else {
+        const val = (part as unknown as { value?: string }).value ?? ''
+        if (part.fieldname === 'name')         name         = val
+        if (part.fieldname === 'description')  description  = val
+        if (part.fieldname === 'contractType') contractType = val
+      }
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return reply.status(400).send({ detail: 'No file uploaded' })
+    }
+    if (fileBuffer.length > 10 * 1024 * 1024) {
+      return reply.status(413).send({ detail: 'File too large (10MB limit)' })
+    }
+
+    // Validate by magic bytes, not the client-declared mimetype (spoofable).
+    // DOCX is a zip archive: 50 4b 03 04. Only .docx is accepted — mammoth is
+    // the converter, and a PDF-derived template loses the heading structure
+    // that makes a template worth having.
+    if (fileBuffer.subarray(0, 4).toString('hex') !== '504b0304') {
+      return reply.status(415).send({
+        detail: 'Only .docx files can be converted into a template. Save your document as .docx and try again.',
+      })
+    }
+
+    let htmlContent: string
+    try {
+      const extracted = await extractDocument(
+        fileBuffer,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        filename,
+      )
+      htmlContent = extracted.htmlContent
+    } catch (err) {
+      req.log.error({ err, filename }, '[templates] docx conversion failed')
+      return reply.status(422).send({
+        detail: 'Could not read that .docx — it may be corrupted or password-protected.',
+      })
+    }
+
+    if (!stripTags(htmlContent)) {
+      return reply.status(422).send({
+        detail: 'That document appears to be empty — there is nothing to turn into a template.',
+      })
+    }
+
+    const cleanName = filename.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim()
+    const templateName = (name.trim() || cleanName || 'Untitled template').slice(0, 256)
+
+    const template = await prisma.template.create({
+      data: {
+        orgId,
+        createdById:  userId,
+        name:         templateName,
+        description:  description.trim() || undefined,
+        contractType: contractType.trim() || null,
+        isPublished:  false,
+        sections:     { create: splitHtmlIntoSections(htmlContent, templateName) },
+      },
+      include: { sections: { orderBy: { sortOrder: 'asc' } } },
+    })
+
+    return reply.status(201).send(template)
+  })
+
   // ── Update template metadata ──────────────────────────────────────────────
   app.patch('/:id', { preHandler: requirePermission('edit', 'template') }, async (req, reply) => {
     const { id } = req.params as { id: string }
@@ -168,8 +256,8 @@ export async function templateRoutes(app: FastifyInstance) {
           content: s.content ?? '',
           sortOrder: s.sortOrder ?? i,
           clauseRefs: s.clauseRefs ?? [],
-          conditionalLogic: s.conditionalLogic ?? null,
-        })),
+          conditionalLogic: (s.conditionalLogic ?? null) as Prisma.InputJsonValue,
+        })) as Prisma.TemplateSectionCreateManyInput[],
       }),
       prisma.template.update({ where: { id }, data: { version: { increment: 1 } } }),
     ])

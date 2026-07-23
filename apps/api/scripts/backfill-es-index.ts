@@ -11,16 +11,24 @@
  * Generalises reindex-personas.ts: no org allowlist, just everything.
  *
  * Usage:
+ *   # every org
  *   cd apps/api && npx tsx --env-file=../../.env scripts/backfill-es-index.ts
+ *   # a single org (positional arg or --org=<id>)
+ *   cd apps/api && npx tsx --env-file=../../.env scripts/backfill-es-index.ts <orgId>
  */
 import { PrismaClient } from '@prisma/client'
 import { indexContract } from '../src/lib/elasticsearch.js'
 
 const prisma = new PrismaClient()
 
+// Optional org scope: positional arg or --org=<id>. Absent → every org.
+const orgArg = process.argv.slice(2).find(a => !a.startsWith('-'))
+  ?? process.argv.slice(2).find(a => a.startsWith('--org='))?.slice('--org='.length)
+const orgId = orgArg || undefined
+
 async function main() {
   const contracts = await prisma.contract.findMany({
-    where: { deletedAt: null },
+    where: { deletedAt: null, ...(orgId ? { orgId } : {}) },
     select: {
       id: true, orgId: true, title: true, type: true, status: true,
       counterpartyName: true, jurisdiction: true,
@@ -33,7 +41,7 @@ async function main() {
       },
     },
   })
-  console.log(`Backfilling ${contracts.length} contracts into Elasticsearch…`)
+  console.log(`Backfilling ${contracts.length} contracts into Elasticsearch (org=${orgId ?? 'ALL'})…`)
 
   let ok = 0, fail = 0
   for (const c of contracts) {

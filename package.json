@@ -14,19 +14,20 @@
     "test": "pnpm -r test",
     "db:migrate": "pnpm --filter api db:migrate",
     "db:studio": "pnpm --filter api db:studio",
-    "db:seed": "pnpm --filter api db:seed",
-    "audit:features": "node scripts/feature-integrity/run.mjs",
-    "audit:features:json": "node scripts/feature-integrity/run.mjs --json",
-    "audit:features:probe": "node scripts/feature-integrity/run.mjs --only",
-    "audit:features:fast": "node scripts/feature-integrity/run.mjs --only P2,P4,P6,P8,P14,P16,P17,P18,P20,P21,P22,P2ui"
+    "db:seed": "pnpm --filter api db:seed"
   },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "axe-core": "^4.11.4",
-    "playwright": "^1.59.1"
+    "eslint": "9",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
+    "playwright": "^1.59.1",
+    "typescript-eslint": "^8.63.0"
   },
   "pnpm": {
     "overrides": {
@@ -37,7 +38,8 @@
       "tar": ">=7.4.3",
       "uuid": ">=14.0.0",
       "brace-expansion": ">=2.0.3",
-      "pdfjs-dist": ">=4.2.67"
+      "pdfjs-dist": ">=4.2.67",
+      "ioredis": "5.10.0"
     }
   }
 }

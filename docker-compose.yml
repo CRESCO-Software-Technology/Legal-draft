@@ -1,15 +1,14 @@
-version: '3.9'
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: clm_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: clm
       POSTGRES_PASSWORD: clm
       POSTGRES_DB: clm_dev
     ports:
-      - '5433:5432'
+      - '127.0.0.1:5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,8 +20,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: clm_redis
+    restart: unless-stopped
     ports:
-      - '6380:6379'
+      - '127.0.0.1:6380:6379'
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -35,12 +35,13 @@ services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
     container_name: clm_elasticsearch
+    restart: unless-stopped
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
     ports:
-      - '9200:9200'
+      - '127.0.0.1:9200:9200'
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     healthcheck:
@@ -52,6 +53,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: clm_minio
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -63,8 +65,8 @@ services:
       MINIO_SECRET_KEY_FILE: ''
       MINIO_CONFIG_ENV_FILE: ''
     ports:
-      - '9100:9000'
-      - '9101:9001'
+      - '127.0.0.1:9100:9000'
+      - '127.0.0.1:9101:9001'
     volumes:
       - minio_data:/data
     healthcheck:
@@ -83,15 +85,19 @@ services:
       /bin/sh -c "
         mc alias set local http://minio:9000 minioadmin minioadmin;
         mc mb --ignore-existing local/clm-documents;
-        mc anonymous set download local/clm-documents;
+        mc anonymous set none local/clm-documents;
         exit 0;
       "
+    # The bucket is PRIVATE — documents are served via presigned URLs
+    # (@aws-sdk/s3-request-presigner), never anonymous download. The prior
+    # `anonymous set download` exposed every uploaded contract to the world.
 
   gotenberg:
     image: gotenberg/gotenberg:8
     container_name: clm_gotenberg
+    restart: unless-stopped
     ports:
-      - '3002:3000'
+      - '127.0.0.1:3002:3000'
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
       interval: 10s

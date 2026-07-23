@@ -762,7 +762,11 @@ model ContractShareLink {
   contractId   String
   token        String    @unique // 32-byte random hex — embedded in portal JWT
   label        String?
-  permissions  String[]  @default(["read"]) // "read" | "comment" | "sign"
+  // Address the link was emailed to (null when it was just copied to clipboard).
+  // Also consulted by the inbound-email sender allow-list so an invited
+  // counterparty can email a redline back.
+  invitedEmail String?
+  permissions  String[]  @default(["read"]) // "read" | "comment" | "upload" (legacy alias: "edit")
   expiresAt    DateTime
   viewCount    Int       @default(0)
   lastViewedAt DateTime?
@@ -1265,4 +1269,16 @@ model MarketingContact {
   @@index([createdAt])
   @@index([email])
   @@map("marketing_contacts")
+}
+
+// Wave 2.4 — durable storage for the collaborative-editing Yjs document.
+// The Hocuspocus Database extension persists each contract's live Y.Doc binary
+// here (keyed by the document name "contract:<id>"), so concurrent edits
+// survive a collab-server restart instead of evaporating from memory.
+model CollabState {
+  documentName String   @id
+  state        Bytes
+  updatedAt    DateTime @updatedAt
+
+  @@map("collab_states")
 }

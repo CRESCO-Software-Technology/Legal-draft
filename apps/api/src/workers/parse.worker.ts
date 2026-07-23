@@ -2,7 +2,8 @@
  * Parse Worker — handles documentQueue jobs:
  *   parse-document  : S3 download → full text extraction → queue extract-ai
  *   embed-contract  : pgvector embedding of clause segments
- *   chunk-and-index : SOTA legal chunking → ES clause index → queue embed-contract
+ *   chunk-and-index : SOTA legal chunking → ES clause index + full-text refresh
+ *                     of the CONTRACT_INDEX doc (Wave 3.1) → queue embed-contract
  */
 import { Worker } from 'bullmq'
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
@@ -12,8 +13,9 @@ import { s3, S3_BUCKET } from '../lib/storage.js'
 import { extractDocument } from '../lib/document.js'
 import { embedContractVersion } from '../lib/embeddings.js'
 import { legalChunkAndStore } from '../lib/legal-chunker.js'
+import { indexContract } from '../lib/elasticsearch.js'
 import { splitPdf, getPdfPageCount } from '../lib/pdf-splitter.js'
-import { queueDetectBinder, queueParseDocument, queueEmbedContract } from '../lib/queue.js'
+import { queueDetectBinder, queueParseDocument, queueEmbedContract, queuePlaybookReview } from '../lib/queue.js'
 import type { ParseDocumentJob, ChunkAndIndexJob, SplitBinderJob } from '../lib/queue.js'
 
 // ─── parse-document ──────────────────────────────────────────────────────────
@@ -87,6 +89,14 @@ async function handleParseDocument(data: ParseDocumentJob): Promise<void> {
     },
   })
 
+  // This version's text just changed, so any cached diff involving it is now
+  // stale. VersionDiffCache is keyed on version IDs alone, so nothing else
+  // would ever evict these rows — without this they'd outlive the content
+  // they describe.
+  await prisma.versionDiffCache.deleteMany({
+    where: { OR: [{ v1Id: versionId }, { v2Id: versionId }] },
+  })
+
   // Get page count (needed later by detect-binder for auto-split range computation)
   let totalPages: number | undefined
   if (mimeType === 'application/pdf') {
@@ -126,6 +136,48 @@ async function handleChunkAndIndex(data: ChunkAndIndexJob): Promise<void> {
     data: { analysisStatus: 'INDEXING' },
   })
 
+  // Wave 3.1 — refresh the CONTRACT_INDEX ('contracts') document with the real
+  // full text now that parsing produced it. Upload/create paths index a stub
+  // with plainText:'' on the promise it would be "re-indexed after parse"; this
+  // is where that promise is kept, so contract_search/portfolio_search BM25 has
+  // an actual document body to match on. Runs BEFORE the clause guard below so a
+  // contract with parsed text but zero detected clauses still gets a full-text
+  // index. indexContract is a full-document overwrite, so this one write both
+  // fills plainText and refreshes the denormalized metadata. Fire-and-forget so
+  // an ES hiccup never flips the job to FAILED (the failed handler does that).
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    select: {
+      title: true, type: true, status: true, counterpartyName: true,
+      jurisdiction: true, summary: true, tags: true, riskScore: true,
+      effectiveDate: true, expiryDate: true, keyTerms: true, metadata: true,
+      createdAt: true,
+    },
+  })
+  const version = await prisma.contractVersion.findUnique({
+    where: { id: versionId },
+    select: { plainText: true },
+  })
+  if (contract) {
+    indexContract(contractId, {
+      orgId,
+      title:            contract.title,
+      type:             contract.type,
+      status:           contract.status,
+      counterpartyName: contract.counterpartyName ?? undefined,
+      jurisdiction:     contract.jurisdiction ?? undefined,
+      plainText:        version?.plainText ?? '',
+      summary:          contract.summary ?? undefined,
+      tags:             contract.tags,
+      riskScore:        contract.riskScore ?? undefined,
+      effectiveDate:    contract.effectiveDate?.toISOString(),
+      expiryDate:       contract.expiryDate?.toISOString(),
+      createdAt:        contract.createdAt.toISOString(),
+      keyTerms:         contract.keyTerms as Record<string, unknown>,
+      metadata:         contract.metadata as Record<string, unknown>,
+    }).catch(err => console.warn('[parse-worker] full-text ES re-index failed contractId=%s: %s', contractId, err?.message ?? err))
+  }
+
   // Fetch clause segments written by the agents service
   const clauses = await prisma.contractClause.findMany({
     where: { versionId },
@@ -133,19 +185,13 @@ async function handleChunkAndIndex(data: ChunkAndIndexJob): Promise<void> {
   })
 
   if (clauses.length === 0) {
-    console.warn('[parse-worker] no clauses found for versionId=%s — marking DONE and skipping ES index', versionId)
+    console.warn('[parse-worker] no clauses found for versionId=%s — marking DONE (full-text already indexed above)', versionId)
     await prisma.contract.update({
       where: { id: contractId },
       data: { analysisStatus: 'DONE', analysisError: null },
     })
     return
   }
-
-  // Fetch contract metadata for ES denormalization
-  const contract = await prisma.contract.findUnique({
-    where: { id: contractId },
-    select: { title: true, type: true, jurisdiction: true },
-  })
 
   await legalChunkAndStore(versionId, contractId, orgId, clauses, contract)
 
@@ -156,6 +202,13 @@ async function handleChunkAndIndex(data: ChunkAndIndexJob): Promise<void> {
     where: { id: contractId },
     data: { analysisStatus: 'DONE', analysisError: null },
   })
+
+  // Score the freshly-extracted clauses against the org playbook. This is the
+  // only automatic playbook pass a received contract ever gets: redline
+  // analysis diffs two versions, so it cannot run on a document that has just
+  // arrived with a single version. Queued after DONE so the contract is
+  // already usable — a failure here leaves analysisStatus untouched.
+  queuePlaybookReview({ contractId, orgId, versionId })
 
   console.info('[parse-worker] chunk-and-index done for contractId=%s', contractId)
 }
@@ -235,6 +288,19 @@ async function handleSplitBinder(data: SplitBinderJob): Promise<void> {
       where: { id: child.id },
       data:  { currentVersionId: childVersion.id },
     })
+
+    // Wave 3.2 — index the split child so it's searchable. plainText is empty
+    // until its own parse job runs (queued below), which re-indexes with full
+    // text via handleChunkAndIndex. Fire-and-forget.
+    indexContract(child.id, {
+      orgId,
+      title:          child.title,
+      type:           child.type,
+      status:         child.status,
+      plainText:      '',
+      tags:           child.tags,
+      createdAt:      child.createdAt.toISOString(),
+    }).catch(err => console.warn('[parse-worker] ES index on binder child failed childId=%s: %s', child.id, err?.message ?? err))
 
     queueParseDocument({
       contractId: child.id,

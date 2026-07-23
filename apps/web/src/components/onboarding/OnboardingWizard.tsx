@@ -250,7 +250,8 @@ function Step2FirstContract({
     accept: {
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-      'application/msword': ['.doc'],
+      // No legacy .doc — the extraction pipeline can't read OLE, so the server
+      // rejects it. Don't let onboarding offer a format that always fails.
       'text/plain': ['.txt'],
     },
   })
@@ -297,7 +298,7 @@ function Step2FirstContract({
         <div className="mt-3 text-sm font-medium text-foreground">
           {uploading ? 'Uploading…' : 'Drop a contract here, or click to browse'}
         </div>
-        <div className="mt-1 text-xs text-muted-foreground">PDF, DOCX, DOC, or TXT</div>
+        <div className="mt-1 text-xs text-muted-foreground">PDF, DOCX, or TXT</div>
       </div>
 
       <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">

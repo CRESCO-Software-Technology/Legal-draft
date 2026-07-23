@@ -19,8 +19,14 @@
  */
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { requireAuth } from '../middleware/auth.js'
+import { requirePermission } from '../middleware/permissions.js'
 import { prisma } from '../lib/prisma.js'
+
+// Wave 1.7 — matters group contracts; there is no dedicated MATTER permission
+// resource, so matter operations are gated on the corresponding CONTRACT
+// permission (view to read, create to add, edit to change/attach, delete to
+// remove). Previously the whole router was requireAuth-only, so a VIEWER could
+// create, delete, and re-parent matters.
 
 const MATTER_STATUSES = ['OPEN', 'CLOSED', 'ARCHIVED'] as const
 
@@ -40,7 +46,7 @@ const UpdateMatterSchema = CreateMatterSchema.partial().extend({
 export async function matterRoutes(app: FastifyInstance) {
 
   // ── GET /api/v1/matters ────────────────────────────────────────────────
-  app.get('/', { preHandler: requireAuth }, async (req, reply) => {
+  app.get('/', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const q = z.object({
       status:  z.enum([...MATTER_STATUSES, 'all']).default('all'),
@@ -91,7 +97,7 @@ export async function matterRoutes(app: FastifyInstance) {
   })
 
   // ── GET /api/v1/matters/:id ────────────────────────────────────────────
-  app.get('/:id', { preHandler: requireAuth }, async (req, reply) => {
+  app.get('/:id', { preHandler: requirePermission('view', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const { id } = req.params as { id: string }
     const matter = await prisma.matter.findFirst({
@@ -133,7 +139,7 @@ export async function matterRoutes(app: FastifyInstance) {
   })
 
   // ── POST /api/v1/matters ───────────────────────────────────────────────
-  app.post('/', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/', { preHandler: requirePermission('create', 'contract') }, async (req, reply) => {
     const { orgId, sub: userId } = req.user
     let body
     try { body = CreateMatterSchema.parse(req.body) }
@@ -157,7 +163,7 @@ export async function matterRoutes(app: FastifyInstance) {
   })
 
   // ── PATCH /api/v1/matters/:id ──────────────────────────────────────────
-  app.patch('/:id', { preHandler: requireAuth }, async (req, reply) => {
+  app.patch('/:id', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const { id } = req.params as { id: string }
     let patch
@@ -187,7 +193,7 @@ export async function matterRoutes(app: FastifyInstance) {
   })
 
   // ── DELETE /api/v1/matters/:id ─────────────────────────────────────────
-  app.delete('/:id', { preHandler: requireAuth }, async (req, reply) => {
+  app.delete('/:id', { preHandler: requirePermission('delete', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const { id } = req.params as { id: string }
     const existing = await prisma.matter.findFirst({
@@ -208,7 +214,7 @@ export async function matterRoutes(app: FastifyInstance) {
   })
 
   // ── POST /api/v1/matters/:id/attach — link a contract/request/thread ──
-  app.post('/:id/attach', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/:id/attach', { preHandler: requirePermission('edit', 'contract') }, async (req, reply) => {
     const { orgId } = req.user
     const { id } = req.params as { id: string }
     const body = z.object({
@@ -224,21 +230,30 @@ export async function matterRoutes(app: FastifyInstance) {
     })
     if (!matter) return reply.status(404).send({ detail: 'Matter not found' })
 
+    // Wave 1.3 — CRITICAL: scope the target entity by orgId. Previously this
+    // updated ANY contract/request/thread by raw id with no org check, so a
+    // user in org A could pull an org B record (whose id leaked via logs /
+    // webhooks / a screenshot) into their matter and read its metadata via
+    // GET /matters/:id. updateMany + count guards cross-org isolation.
+    let result: { count: number }
     if (body.data.kind === 'contract') {
-      await prisma.contract.update({
-        where: { id: body.data.entityId },
+      result = await prisma.contract.updateMany({
+        where: { id: body.data.entityId, orgId, deletedAt: null },
         data:  { matterId: id },
       })
     } else if (body.data.kind === 'request') {
-      await prisma.contractRequest.update({
-        where: { id: body.data.entityId },
+      result = await prisma.contractRequest.updateMany({
+        where: { id: body.data.entityId, orgId, deletedAt: null },
         data:  { matterId: id },
       })
     } else {
-      await prisma.agentThread.update({
-        where: { id: body.data.entityId },
+      result = await prisma.agentThread.updateMany({
+        where: { id: body.data.entityId, orgId },
         data:  { matterId: id },
       })
+    }
+    if (result.count === 0) {
+      return reply.status(404).send({ detail: `${body.data.kind} not found in your organization` })
     }
     return reply.send({ ok: true, matterId: id, kind: body.data.kind, entityId: body.data.entityId })
   })

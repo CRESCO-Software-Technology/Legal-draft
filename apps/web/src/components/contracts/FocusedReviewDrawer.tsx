@@ -16,12 +16,33 @@
  * B.5.6 — UI only, local state. B.5.7 persists reviewState to the DB.
  */
 import { useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, X, ChevronLeft, ChevronRight, FileEdit, XCircle,
   BookOpen, Circle, MessageCircle, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { classifyRisk, type RiskClause, type RiskKind } from './RiskDecorations'
+
+/** A playbook position as returned by GET /playbook/positions. */
+interface PlaybookPosition {
+  id:             string
+  positionType:   'preferred' | 'acceptable' | 'fallback' | 'walkaway'
+  content:        string
+  notes?:         string | null
+  clauseCategory?: { id: string; name: string } | null
+}
+
+const POSITION_TONE: Record<string, string> = {
+  preferred:  'bg-emerald-50 text-emerald-700',
+  acceptable: 'bg-blue-50 text-blue-700',
+  fallback:   'bg-amber-50 text-amber-700',
+  walkaway:   'bg-red-50 text-red-700',
+}
+
+const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+const stripHtml = (s: string) => s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 
 /** One clause with everything the drawer needs to render it. */
 export interface FocusedClause extends RiskClause {
@@ -42,6 +63,7 @@ function labelClauseType(t: string | null | undefined): string {
 }
 
 export function FocusedReviewDrawer({
+  contractId,
   clauses,
   currentIndex,
   reviewStates,
@@ -53,6 +75,7 @@ export function FocusedReviewDrawer({
   onMarkReviewed,
   onClose,
 }: {
+  contractId: string
   clauses: FocusedClause[]
   currentIndex: number
   reviewStates: Record<string, ReviewState>
@@ -65,6 +88,60 @@ export function FocusedReviewDrawer({
   onClose: () => void
 }) {
   const clause = clauses[currentIndex]
+  const qc = useQueryClient()
+
+  // Wave 2.2 — real playbook comparison. Pull the org's playbook positions and
+  // match them to this clause's type by category name (replaces the old
+  // hardcoded "Playbook v2 / Non-standard" stub with grounded DB data).
+  const { data: playbookPositions } = useQuery<PlaybookPosition[]>({
+    queryKey: ['playbook-positions'],
+    queryFn: () => api.get('/playbook/positions').then(r => r.data.data ?? []),
+    staleTime: 5 * 60_000,
+  })
+  const matchedPositions = (playbookPositions ?? []).filter(p =>
+    clause?.clauseType && p.clauseCategory?.name &&
+    normalize(p.clauseCategory.name) === normalize(clause.clauseType),
+  )
+
+  // Alternative language for this clause, grounded in the org playbook.
+  // On demand rather than automatic: each call is an LLM round-trip, and the
+  // reviewer clicks through many clauses that need no rewrite.
+  const suggest = useMutation({
+    mutationFn: async (clauseId: string) => {
+      const r = await api.post(`/contracts/${contractId}/clauses/${clauseId}/suggest`, {})
+      return r.data as {
+        hasPlaybook: boolean
+        variants: Array<{ aggression: string; proposedText: string; rationale: string }>
+        error?: string
+      }
+    },
+  })
+
+  // Splice a chosen variant into the document as a new version. This is what
+  // "apply" always should have meant — the old Accept button only marked the
+  // clause resolved and wrote no text at all.
+  const applyVariant = useMutation({
+    mutationFn: async (v: { aggression: string; proposedText: string; rationale: string }) => {
+      const r = await api.post(`/contracts/${contractId}/clauses/${clause!.id}/apply`, {
+        proposedText: v.proposedText,
+        aggression:   v.aggression,
+        rationale:    v.rationale,
+      })
+      return r.data as { newVersionNumber: number; spliced: boolean }
+    },
+    onSuccess: () => {
+      // The document body and version list both changed underneath us.
+      qc.invalidateQueries({ queryKey: ['contract', contractId] })
+      qc.invalidateQueries({ queryKey: ['contract-versions', contractId] })
+      qc.invalidateQueries({ queryKey: ['contract-clauses', contractId] })
+      onMarkReviewed(clause!.id)
+    },
+  })
+
+  // Drop any loaded suggestion when the drawer moves to a different clause —
+  // showing one clause's proposed language under another would be dangerous.
+  const clauseId = clause?.id
+  useEffect(() => { suggest.reset(); applyVariant.reset() }, [clauseId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard: Esc closes, j/k nav like the rest of the app might adopt.
   useEffect(() => {
@@ -176,55 +253,108 @@ export function FocusedReviewDrawer({
         )}
       </Section>
 
-      {/* ── PLAYBOOK GAP (deviations only) ─────────────────────────────── */}
+      {/* ── PLAYBOOK COMPARISON (deviations only) ─────────────────────── */}
       {kind === 'deviation' && (
-        <Section title="Playbook gap">
-          <dl className="space-y-1.5 text-sm">
-            <div className="flex justify-between gap-4">
-              <dt className="text-gray-500 text-xs">Your standard</dt>
-              <dd className="text-gray-400 italic text-right">Playbook v2</dd>
+        <Section title="Playbook comparison">
+          {matchedPositions.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">
+              No playbook position defined for {labelClauseType(clause.clauseType)}.
+              Add one in Admin → Playbook to compare this clause automatically.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {matchedPositions.map(p => (
+                <div key={p.id} className="rounded-md border border-gray-200 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={cn(
+                      'text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded',
+                      POSITION_TONE[p.positionType] ?? 'bg-gray-100 text-gray-600',
+                    )}>
+                      {p.positionType}
+                    </span>
+                    {p.clauseCategory?.name && (
+                      <span className="text-[10px] text-gray-400 truncate">{p.clauseCategory.name}</span>
+                    )}
+                  </div>
+                  {p.content && (
+                    <p className="mt-1 text-xs text-gray-600 line-clamp-4">{stripHtml(p.content)}</p>
+                  )}
+                  {p.notes && <p className="mt-1 text-[11px] text-gray-400 italic">{p.notes}</p>}
+                </div>
+              ))}
             </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-gray-500 text-xs">This contract</dt>
-              <dd className="text-gray-900 text-right">Non-standard</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-gray-500 text-xs">Severity</dt>
-              <dd className="text-blue-700 font-medium text-right">Deviation</dd>
-            </div>
-          </dl>
-          <p className="mt-2 text-[11px] text-gray-400 italic">
-            Playbook comparison is a stub in V1 — full mapping lands with B.5.13 (Compare Versions).
-          </p>
+          )}
         </Section>
       )}
 
       {/* ── AI SUGGESTION ──────────────────────────────────────────────── */}
-      <Section title="AI suggestion">
-        <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 leading-relaxed max-h-40 overflow-y-auto">
-          {clause.interpretation
-            ? <span className="italic text-gray-500">Suggestion generation lands in B.5.9 (⌘K palette). For now, use "Edit manually" to rewrite.</span>
-            : <span className="italic text-gray-400">No AI suggestion available yet. Use Edit to revise manually.</span>}
-        </div>
-      </Section>
-
-      {/* ── PLAYBOOK REFERENCE ─────────────────────────────────────────── */}
-      <Section title="Playbook reference" icon={<BookOpen className="h-3.5 w-3.5 text-gray-400" />}>
-        <div className="text-sm text-gray-600">
-          <div className="font-medium text-gray-700">Standard Contract Playbook</div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            Link to specific rule pending playbook schema work.
+      <Section title="Alternative language" icon={<BookOpen className="h-3.5 w-3.5 text-gray-400" />}>
+        {suggest.data ? (
+          <div className="space-y-2">
+            {suggest.data.variants.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">
+                {suggest.data.error ?? 'No alternative language was returned for this clause.'}
+              </p>
+            ) : (
+              suggest.data.variants.map((v, i) => (
+                <div key={i} className="rounded-md border border-gray-200 p-2">
+                  <span className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">
+                    {v.aggression}
+                  </span>
+                  <p className="mt-1.5 text-xs text-gray-700 whitespace-pre-line">{v.proposedText}</p>
+                  {v.rationale && (
+                    <p className="mt-1 text-[11px] text-gray-400 italic">{v.rationale}</p>
+                  )}
+                  <button
+                    onClick={() => applyVariant.mutate(v)}
+                    disabled={applyVariant.isPending}
+                    data-testid={`apply-variant-${v.aggression}`}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+                  >
+                    <FileEdit className="h-3.5 w-3.5" />
+                    {applyVariant.isPending ? 'Applying…' : 'Apply to document'}
+                  </button>
+                </div>
+              ))
+            )}
+            {!suggest.data.hasPlaybook && suggest.data.variants.length > 0 && (
+              // Say so plainly — otherwise this reads as playbook-approved language.
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                No preferred playbook position exists for {labelClauseType(clause.clauseType)},
+                so this is general drafting practice rather than your playbook.
+              </p>
+            )}
           </div>
-        </div>
+        ) : (
+          <>
+            <button
+              onClick={() => suggest.mutate(clause.id)}
+              disabled={suggest.isPending}
+              data-testid="suggest-alternative-btn"
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+            >
+              <Sparkles className="h-4 w-4" />
+              {suggest.isPending ? 'Drafting alternatives…' : 'Suggest alternative language'}
+            </button>
+            {suggest.isError && (
+              <p className="mt-2 text-xs text-red-600">
+                Could not draft alternatives right now. Try again, or use Edit manually.
+              </p>
+            )}
+          </>
+        )}
       </Section>
 
       {/* ── ACTIONS ─────────────────────────────────────────────────────── */}
       <div className="px-5 py-4 border-b space-y-2">
         <button
           onClick={() => onAccept(clause.id)}
+          title="Accept the clause as written and mark it resolved"
           className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700"
         >
-          <Sparkles className="h-4 w-4" /> Accept AI suggestion
+          {/* Named for what it does: this resolves the clause, it does not
+              write any text into the document. */}
+          <Circle className="h-4 w-4" /> Accept clause as-is
         </button>
         <button
           onClick={() => onEditManually(clause.id)}

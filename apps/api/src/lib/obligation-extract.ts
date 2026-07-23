@@ -101,6 +101,7 @@ export async function extractObligationsForContract({
       plainText:     text,
       contractType:  contract.type,
       effectiveDate: contract.effectiveDate ? contract.effectiveDate.toISOString().slice(0, 10) : undefined,
+      orgId,   // Wave 3.5 — lets the agents service resolve the org's BYOK key
     }),
   })
   if (!pyRes.ok) {

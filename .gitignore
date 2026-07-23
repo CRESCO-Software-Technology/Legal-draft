@@ -12,6 +12,7 @@ out/
 .env
 .env.*
 !.env.example
+!.env.selfhost.example
 
 # Cloud Run env-vars files are tracked. They contain only non-secret
 # config (URLs, feature flags). Real secrets come from Google Secret
@@ -85,3 +86,7 @@ scripts/screenshots/smoke-ui/
 # Vite build cache
 .vite/
 apps/*/.vite/
+
+# Wave 1.1 — dev-only generated JWT/portal secrets (never commit)
+.dev-secrets.json
+.dev-signing-cert.p12
