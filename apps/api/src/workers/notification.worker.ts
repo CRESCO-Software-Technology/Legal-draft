@@ -54,7 +54,7 @@ function sendEmailNonBlocking(data: NotificationJob): void {
       } : undefined,
     })
     return transporter.sendMail({
-      from:    process.env.SMTP_FROM ?? 'noreply@clm.app',
+      from:    process.env.SMTP_FROM ?? process.env.EMAIL_FROM ?? 'noreply@clm.app',
       to:      data.email,
       subject: data.title,
       text:    data.body,

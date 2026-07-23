@@ -8,11 +8,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080
 
 # Build tools are needed for a few wheels (pymupdf, pydantic-core on some arches).
+# tesseract-ocr is the Linux OCR backend for scanned PDFs (Wave 4) — pytesseract
+# shells out to it; without the binary, scanned PDFs would extract to empty text.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
         ca-certificates \
         libmagic1 \
+        tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

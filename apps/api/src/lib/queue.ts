@@ -10,6 +10,10 @@ export const agentQueue       = new Queue('agents',        { connection: redis }
 export const scanQueue        = new Queue('scans',         { connection: redis })
 // P10A — webhook delivery queue
 export const webhookQueue     = new Queue('webhooks',      { connection: redis })
+// Sealing an executed contract into a signed PDF. Its own queue so a slow or
+// failing seal can't hold up document parsing, and so retries are visible
+// separately in Bull Board.
+export const signingQueue     = new Queue('signing',       { connection: redis })
 
 // ─── Event bus (Redis Streams) ───────────────────────────────────────────────
 
@@ -206,6 +210,36 @@ export interface NotificationJob {
   email?:       string  // recipient email address — only used if SMTP_HOST is configured
 }
 
+/**
+ * Playbook review of a SINGLE contract, queued automatically once extraction
+ * finishes. Redline analysis needs two versions to diff, so a contract received
+ * from a counterparty (one version) could never be scored against the playbook;
+ * this is the single-document counterpart.
+ */
+export interface PlaybookReviewJob {
+  contractId: string
+  orgId:      string
+  /** The version that was just extracted — also scopes the job identity. */
+  versionId:  string
+}
+export function queuePlaybookReview(payload: PlaybookReviewJob): void {
+  agentQueue.add('playbook-review', payload, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 15000 },
+    // Keyed on the VERSION, not the contract. BullMQ silently drops an add with
+    // a duplicate jobId (it returns the existing job rather than throwing, so a
+    // .catch here would never see it), and completed jobs are retained, so a
+    // contract-scoped id would claim that key forever: the contract would be
+    // reviewed once and every later version — including the counterparty's
+    // returned redline, the case this feature exists for — would be dropped in
+    // silence while the stored result still pointed at v1.
+    jobId: `playbook-review-${payload.contractId}-${payload.versionId}`,
+    // Don't accumulate keys indefinitely either.
+    removeOnComplete: 100,
+    removeOnFail:     50,
+  }).catch(err => console.warn('[queue] failed to enqueue playbook-review:', err.message))
+}
+
 /** Approval AI summary — fetches contract, runs 3-step LangGraph pipeline, patches result back. */
 export function queueApprovalSummary(payload: ApprovalSummaryJob): void {
   agentQueue.add('approval-summary', payload, {
@@ -245,6 +279,42 @@ export function queueDraftContract(payload: DraftContractJob): void {
     attempts: 2,
     backoff: { type: 'exponential', delay: 5000 },
   }).catch(err => console.warn('[queue] failed to enqueue draft-contract:', err.message))
+}
+
+/**
+ * Seal an executed contract into its signed PDF and store it as a new version.
+ *
+ * Deliberately retried: this used to be a fire-and-forget IIFE, so a transient
+ * S3/Gotenberg/cert failure left the contract EXECUTED with no signed document
+ * and no way to recover. The handler is idempotent (deterministic signed key),
+ * so re-running a succeeded job is a no-op.
+ *
+ * Only the id is carried — the worker re-reads current state rather than
+ * trusting a payload snapshot that may be stale by the time it runs.
+ */
+export interface SealSignedPdfJob {
+  signatureRequestId: string
+}
+export function queueSealSignedPdf(payload: SealSignedPdfJob): void {
+  signingQueue.add('seal-signed-pdf', payload, {
+    attempts: 5,
+    backoff:  { type: 'exponential', delay: 15000 },
+    // Deterministic id: two concurrent seals would each create a version
+    // carrying the same signed s3Key under different versionNumbers (the unique
+    // constraint is on [contractId, versionNumber], not the key), so dedupe at
+    // enqueue rather than relying on the handler's idempotency alone.
+    // Trade-off: once a job has exhausted its retries it keeps this id, so
+    // re-enqueueing is a no-op — recovery is an operator retry from Bull Board,
+    // where the signing queue is registered.
+    jobId:    `seal-${payload.signatureRequestId}`,
+  }).catch(err =>
+    // Loud: the contract is already EXECUTED by this point, so a dropped
+    // enqueue means the sealed PDF is never produced and nothing else notices.
+    console.error(
+      '[queue] FAILED to enqueue seal-signed-pdf for signatureRequest=%s — contract is executed but will have no sealed PDF until this is retried: %s',
+      payload.signatureRequestId, err.message,
+    ),
+  )
 }
 
 /** In-app notification (+ optional email) — written to Notification table. */

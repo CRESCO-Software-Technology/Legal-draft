@@ -41,12 +41,12 @@ The market's two leaders prove the thesis: **Harvey** has the intelligence (anal
 
 | | |
 |---|---|
-| 🤖 **Agent-first** | Seven specialist agents (review, draft, redline, negotiate, search, extract, advise) on a LangGraph orchestrator — grounded in *your* contracts, never hallucinated. |
+| 🤖 **Agent-first** | Seven specialist agents (review, draft, redline, approve, portfolio, ask, assist) on a LangGraph orchestrator — grounded in *your* contracts and cited so you can verify every answer. |
 | 📑 **Extract + cite** | Drop in any contract; every clause, date, and dollar is extracted, risk-scored, and cited to the source page. |
 | 📊 **Portfolio intelligence** | Hybrid retrieval (pgvector + Elasticsearch + RRF fusion) lets the agent reason across your *entire* contract portfolio — pricing benchmarks, exposure, what auto-renews. |
 | ✍️ **Redline & negotiate** | Ask for counter-proposals; get conservative / moderate / aggressive options with exact replacement language, apply in a click. |
 | ✅ **Full lifecycle** | Approval workflows, in-platform e-signature, and post-signature obligation tracking — "on rails." |
-| 🔑 **Bring your own model** | Anthropic, OpenAI, or Google Gemini — switch on any message. No vendor lock-in. |
+| 🔑 **Bring your own model** | Anthropic, OpenAI, or Google Gemini — configure your provider and key. No vendor lock-in. |
 | 🔒 **Self-hosted & private** | `docker compose up` on your own infra. Your contracts never touch a third-party SaaS. |
 
 ---
@@ -105,7 +105,7 @@ pnpm dev
 │  hybrid retrieval (pgvector + Elasticsearch + RRF)         │
 └───────────────┬────────────────────────────────────────────┘
                 │  internal API
-┌───────────────┴─ FastAPI + LangGraph (agents :8000) ───────┐
+┌───────────────┴─ FastAPI + LangGraph (agents :8002) ───────┐
 │  7 agents · tool-calling · grounded RAG · BYO model        │
 └─────────────────────────────────────────────────────────────┘
    Postgres(+pgvector) · Redis · Elasticsearch · MinIO · Gotenberg

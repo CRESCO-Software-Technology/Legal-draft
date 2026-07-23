@@ -63,12 +63,37 @@ ANTHROPIC_API_KEY=anthropic-key:latest,\
 OPENAI_API_KEY=openai-key:latest,\
 GOOGLE_API_KEY=google-key:latest"
 
+# Wave 4 — apply pending Prisma migrations BEFORE any service that reads the
+# new schema goes live. Requires reachability to the database (Cloud SQL public
+# IP + authorized network, or run from inside the VPC / via the Cloud SQL Auth
+# Proxy). The DB URL comes from Secret Manager, never from a committed file.
+migrate_db() {
+  echo "--- prisma migrate deploy ---"
+  local db_url
+  # Best-effort read of the DB URL. The deployer SA may lack secret access, or
+  # the DB may be unreachable from this runner — suppress the raw gcloud error
+  # and return non-zero so the caller decides whether to block (the full deploy
+  # does NOT; the standalone `migrate` subcommand does).
+  db_url="$(gcloud secrets versions access latest --secret=database-url --project="${GCP_PROJECT}" 2>/dev/null || true)"
+  if [[ -z "${db_url}" ]]; then
+    echo "⚠  could not read the database-url secret from this runner. Grant the deployer service account roles/secretmanager.secretAccessor to enable auto-migrate, or apply migrations separately (docs/operations/SELF-HOSTING.md)."
+    return 1
+  fi
+  ( cd "${ROOT}/apps/api" && DATABASE_URL="${db_url}" pnpm exec prisma migrate deploy )
+}
+
 deploy_api() {
   echo "--- deploy api-service ---"
   [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; exit 1; }
   # The repo root has a symlink `Dockerfile -> apps/api/Dockerfile` because
   # the API build context is the repo root (pnpm workspace), and newer gcloud
   # no longer accepts an explicit --dockerfile flag.
+  #
+  # Incremental rollout note: the API keeps running the BullMQ workers in-process
+  # (as it always has) and calls Gotenberg without OIDC for now, so this deploy
+  # cannot regress a working one. Once the dedicated worker-service is confirmed
+  # healthy and Gotenberg is verified private, flip these on (in one verified
+  # step): --set-env-vars "WORKERS_ENABLED=false,GOTENBERG_REQUIRE_AUTH=true".
   gcloud run deploy api-service \
     --project "${GCP_PROJECT}" \
     --region "${GCP_REGION}" \
@@ -81,6 +106,31 @@ deploy_api() {
     --env-vars-file "${ROOT}/env.api.yaml" \
     --set-secrets "${API_SECRETS}" \
     --allow-unauthenticated
+}
+
+# Wave 4 — dedicated always-on worker service. Same image/source as the API but
+# runs worker-entrypoint.ts instead of the Fastify app, with --min-instances 1
+# + --no-cpu-throttling so time-based jobs (approval escalation, signature
+# reminders, renewal scans) actually fire. Not publicly invocable.
+deploy_workers() {
+  echo "--- deploy worker-service (always-on BullMQ workers) ---"
+  # return (not exit) so the non-fatal caller in `all` isn't killed.
+  [[ -f "${ROOT}/env.api.yaml" ]] || { echo "missing env.api.yaml (copy from env.api.example.yaml)" >&2; return 1; }
+  gcloud run deploy worker-service \
+    --project "${GCP_PROJECT}" \
+    --region "${GCP_REGION}" \
+    --source "${ROOT}" \
+    --service-account "${API_SA}" \
+    --command "node" \
+    --args "--import,tsx,src/worker-entrypoint.ts" \
+    --min-instances 1 --max-instances 1 \
+    --no-cpu-throttling \
+    --memory 1Gi --cpu 1 \
+    --timeout 300 \
+    --port 8080 \
+    --env-vars-file "${ROOT}/env.api.yaml" \
+    --set-secrets "${API_SECRETS}" \
+    --no-allow-unauthenticated
 }
 
 deploy_agents() {
@@ -115,9 +165,15 @@ deploy_gotenberg() {
     --port 3000 \
     --args "gotenberg,--api-port=3000" \
     --allow-unauthenticated
-  # NOTE: gotenberg has no built-in auth and the API does not fetch OIDC
-  # tokens before calling it. The service is exposed publicly but bounded
-  # by --max-instances=1, so abuse capacity is capped.
+  # Wave 4 hardening READY BUT DEFERRED for the first rollout: Gotenberg has no
+  # built-in auth, so it should be made private with only the API's SA able to
+  # invoke it via OIDC (the client code already supports this — set
+  # GOTENBERG_REQUIRE_AUTH=true on the API). Enable in one verified step AFTER
+  # confirming PDF rendering still works, because Cloud Run's revision rollback
+  # does NOT restore the public/private flag:
+  #   gcloud run deploy gotenberg ... --no-allow-unauthenticated
+  #   gcloud run services add-iam-policy-binding gotenberg \
+  #     --member "serviceAccount:${API_SA}" --role roles/run.invoker --region "${GCP_REGION}"
 }
 
 deploy_web() {
@@ -138,20 +194,33 @@ deploy_marketing() {
 }
 
 case "${cmd}" in
+  migrate)    migrate_db ;;
   api)        deploy_api ;;
   agents)     deploy_agents ;;
   gotenberg)  deploy_gotenberg ;;
+  workers)    deploy_workers ;;
   web)        deploy_web ;;
   marketing)  deploy_marketing ;;
   all)
+    # Apply schema changes before any service reads them. Non-fatal in the full
+    # deploy: if this runner can't reach the DB (e.g. Cloud SQL private IP / not
+    # in authorized networks), warn and keep deploying rather than turning a
+    # working deploy into a failed one. Run `./scripts/deploy.sh migrate` from a
+    # host that can reach the DB (or add the Cloud SQL Auth Proxy) to apply them.
+    # The `migrate` subcommand below stays strict for intentional runs.
+    migrate_db || echo "   → continuing deploy; migrations not auto-applied this run."
     deploy_gotenberg
     deploy_agents
     deploy_api
+    # Additive new service. Non-fatal on the first rollout: if it fails, the API
+    # still runs the workers in-process (as today), so jobs never stop; fix the
+    # worker-service, then flip WORKERS_ENABLED=false on the API to de-duplicate.
+    deploy_workers || echo "⚠  worker-service deploy failed — continuing; the API still runs workers in-process."
     deploy_web
     deploy_marketing
     ;;
   *)
-    echo "Usage: $0 {all|api|agents|gotenberg|web|marketing}" >&2
+    echo "Usage: $0 {all|migrate|api|agents|gotenberg|workers|web|marketing}" >&2
     exit 1
     ;;
 esac

@@ -17,11 +17,14 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { resolveLlm, resolveProviderModel, NoProviderAvailable, type Tier } from '../lib/aiRouter.js'
 import { prisma } from '../lib/prisma.js'
-import { resolveApprover, checkAutoApprove, type WorkflowStepDef } from '../lib/workflow-engine.js'
+import { resolveApprovers, checkAutoApprove, type WorkflowStepDef } from '../lib/workflow-engine.js'
 import { generateDocument } from '../lib/template-engine.js'
 import { searchClauses } from '../lib/embeddings.js'
 import { advancedSearch, indexContract } from '../lib/elasticsearch.js'
+import { queueClassifyDocument, queueParseDocument } from '../lib/queue.js'
 import { applyPiiPolicy } from '../lib/pii-policy.js'
+import { proposeClauseAlternatives } from '../lib/clause-propose.js'
+import { applyClauseProposal } from '../lib/clause-apply.js'
 
 const TIERS: Tier[] = ['reasoning', 'default', 'fast', 'embed', 'rerank', 'vision_ocr']
 
@@ -1786,7 +1789,7 @@ export async function internalAiRoutes(app: FastifyInstance) {
           const byId = new Map<string, { passed: boolean; evidence?: string }>()
           for (const v of judged.mustHave ?? []) byId.set(v.id, { passed: v.passed, evidence: v.evidence })
           for (const v of judged.mustNot ?? [])  byId.set(v.id, { passed: v.passed, evidence: v.evidence })
-          const boundsByKey = new Map<string, typeof judged.bounds[number]>()
+          const boundsByKey = new Map<string, NonNullable<typeof judged.bounds>[number]>()
           for (const b of judged.bounds ?? []) boundsByKey.set(b.key, b)
 
           const merged = (ck.violations as Array<Record<string, unknown>>).map(v => {
@@ -1857,96 +1860,19 @@ export async function internalAiRoutes(app: FastifyInstance) {
     catch (err) {
       return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
     }
-    if (!body.clauseId && !body.clauseType) {
-      return reply.status(400).send({ detail: 'Either clauseId or clauseType is required' })
-    }
-
-    // Load the contract + locate the target clause. clauseId wins; else
-    // pick the first non-sub-chunk clause matching clauseType.
-    const contract = await prisma.contract.findFirst({
-      where: { id: body.contractId, orgId: body.orgId, deletedAt: null },
-      select: { id: true, title: true, type: true, currentVersionId: true },
+    // Shared with the user-facing POST /contracts/:id/clauses/:clauseId/suggest
+    // so the chat agent and the review drawer produce identical proposals.
+    const result = await proposeClauseAlternatives({
+      contractId:   body.contractId,
+      orgId:        body.orgId,
+      clauseId:     body.clauseId,
+      clauseType:   body.clauseType,
+      instructions: body.instructions,
     })
-    if (!contract) return reply.status(404).send({ detail: 'Contract not found' })
-    if (!contract.currentVersionId) {
-      return reply.status(400).send({ detail: 'Contract has no current version' })
+    if (!result.ok) {
+      return reply.status(result.status).send({ detail: result.detail, upstream: result.upstream })
     }
-
-    const clause = body.clauseId
-      ? await prisma.contractClause.findFirst({
-          where: { id: body.clauseId, versionId: contract.currentVersionId },
-        })
-      : await prisma.contractClause.findFirst({
-          where: {
-            versionId: contract.currentVersionId,
-            isSubChunk: false,
-            clauseType: body.clauseType!,
-          },
-          orderBy: { sortOrder: 'asc' },
-        })
-    if (!clause) return reply.status(404).send({ detail: 'Clause not found' })
-
-    // Map clauseType → ClauseCategory → preferred PlaybookPosition.
-    const category = await prisma.clauseCategory.findFirst({
-      where: {
-        orgId: body.orgId,
-        // Same normalisation rule as playbook_check.
-        name: { equals: clause.clauseType.replace(/_/g, ' '), mode: 'insensitive' },
-      },
-      select: { id: true, name: true },
-    })
-    let preferred: { content: string; rules: unknown } | null = null
-    if (category) {
-      const pos = await prisma.playbookPosition.findFirst({
-        where: {
-          orgId: body.orgId,
-          clauseCategoryId: category.id,
-          positionType: 'preferred',
-        },
-        select: { content: true, rules: true },
-      })
-      if (pos) preferred = pos
-    }
-
-    // Fire the Python /redline_propose endpoint.
-    const pyRes = await fetch(`${AGENTS_URL}/redline_propose`, {
-      method:  'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-internal-secret': INTERNAL_SECRET,
-      },
-      body: JSON.stringify({
-        clauseText:         clause.content,
-        clauseType:         clause.clauseType,
-        category:           category?.name,
-        preferredContent:   preferred?.content ?? null,
-        rules:              preferred?.rules ?? null,
-        contractType:       contract.type,
-        instructions:       body.instructions,
-      }),
-    })
-    if (!pyRes.ok) {
-      const err = await pyRes.text()
-      return reply.status(502).send({ detail: 'redline_propose failed', upstream: err.slice(0, 300) })
-    }
-    const proposal = await pyRes.json() as {
-      variants?: Array<{ aggression: string; proposedText: string; rationale: string; changes: Array<{before:string;after:string;reason:string}> }>
-      error?: string
-    }
-
-    return reply.send({
-      contract:    { id: contract.id, title: contract.title, type: contract.type },
-      clause:      {
-        id:         clause.id,
-        clauseType: clause.clauseType,
-        sectionRef: clause.sectionRef,
-        originalText: clause.content,
-      },
-      category:    category ? { id: category.id, name: category.name } : null,
-      hasPlaybook: !!preferred,
-      variants:    proposal.variants ?? [],
-      error:       proposal.error,
-    })
+    return reply.send(result.data)
   })
 
   // ── POST /internal/ai/tools/comment_add (D.3.2) ────────────────────────────
@@ -2029,8 +1955,10 @@ export async function internalAiRoutes(app: FastifyInstance) {
   })
 
   // ── POST /internal/ai/tools/request_create/undo (D.3.5 pattern) ────────────
-  // Soft-delete by setting status=CANCELLED. Requests don't have a
-  // deletedAt column — cancelled is the equivalent for our undo window.
+  // Wave 3.9 — soft-delete via the deletedAt column (which ContractRequest has),
+  // consistent with every request read path (all filter deletedAt:null) and with
+  // the contract undo. The old code wrote status='CANCELLED', which is NOT a
+  // member of the RequestStatus enum, corrupting status filters/counts.
   app.post('/tools/request_create/undo', async (req, reply) => {
     const body = z.object({
       orgId:     z.string().min(1),
@@ -2040,15 +1968,15 @@ export async function internalAiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ detail: 'Invalid request', issues: body.error.issues })
     }
     const existing = await prisma.contractRequest.findFirst({
-      where: { id: body.data.requestId, orgId: body.data.orgId, status: { not: 'CANCELLED' } },
+      where: { id: body.data.requestId, orgId: body.data.orgId, deletedAt: null },
       select: { id: true },
     })
     if (!existing) {
-      return reply.status(404).send({ detail: 'Request not found or already cancelled' })
+      return reply.status(404).send({ detail: 'Request not found or already undone' })
     }
     await prisma.contractRequest.update({
       where: { id: existing.id },
-      data:  { status: 'CANCELLED' },
+      data:  { deletedAt: new Date() },
     })
     return reply.send({ ok: true, undone: true, requestId: existing.id })
   })
@@ -2120,13 +2048,14 @@ export async function internalAiRoutes(app: FastifyInstance) {
 
     if (body.action === 'assign_owner') {
       const nextOwnerId = body.payload.ownerId == null ? null : String(body.payload.ownerId)
-      if (nextOwnerId) {
-        const user = await prisma.user.findFirst({
-          where: { id: nextOwnerId, orgId: body.orgId, deletedAt: null },
-          select: { id: true },
-        })
-        if (!user) return reply.status(404).send({ detail: 'User not found in this org' })
-      }
+      // Contract.ownerId is non-nullable — an owner is required. Reject an
+      // unassign attempt rather than violating the DB constraint.
+      if (!nextOwnerId) return reply.status(400).send({ detail: 'ownerId is required for assign_owner' })
+      const user = await prisma.user.findFirst({
+        where: { id: nextOwnerId, orgId: body.orgId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!user) return reply.status(404).send({ detail: 'User not found in this org' })
       await prisma.contract.update({
         where: { id: existing.id },
         data:  { ownerId: nextOwnerId },
@@ -2166,16 +2095,40 @@ export async function internalAiRoutes(app: FastifyInstance) {
     // retype / re_analyze — NOT reversible. We still run them, but the
     // caller surface (agent-threads.ts) will set reversible=false on the
     // ToolCall row so the UI doesn't render an Undo button.
+    // Wave 3.9 — re-run analysis by enqueuing a worker job, mirroring the REST
+    // /:id/analyze path so the contract can't wedge. If the latest version
+    // already has parsed text, smart-resume via classify (CLASSIFYING). If it
+    // has an uploaded doc but no parsed text yet, do a full re-parse
+    // (PENDING) — enqueuing classify would silently no-op and strand the
+    // contract in CLASSIFYING. Returns false if there's nothing to analyze.
+    const reanalyze = async (): Promise<boolean> => {
+      const latest = await prisma.contractVersion.findFirst({
+        where: { contractId: existing.id },
+        orderBy: { versionNumber: 'desc' },
+        select: { id: true, plainText: true, s3Key: true, mimeType: true },
+      })
+      if (!latest) return false
+      if (latest.plainText && latest.plainText.trim()) {
+        await prisma.contract.update({ where: { id: existing.id }, data: { analysisStatus: 'CLASSIFYING' } })
+        queueClassifyDocument({ contractId: existing.id, versionId: latest.id, orgId: body.orgId })
+        return true
+      }
+      if (latest.s3Key) {
+        const filename = latest.mimeType === 'application/pdf' ? 'contract.pdf'
+          : latest.mimeType?.includes('wordprocessingml') ? 'contract.docx'
+          : 'contract.txt'
+        await prisma.contract.update({ where: { id: existing.id }, data: { analysisStatus: 'PENDING' } })
+        queueParseDocument({ contractId: existing.id, versionId: latest.id, s3Key: latest.s3Key, mimeType: latest.mimeType ?? 'application/pdf', filename, orgId: body.orgId })
+        return true
+      }
+      return false
+    }
+
     if (body.action === 'retype') {
       const nextType = String(body.payload.type ?? '')
       if (!nextType) return reply.status(400).send({ detail: 'payload.type required' })
-      await prisma.contract.update({
-        where: { id: existing.id },
-        data:  { type: nextType, analysisStatus: 'PENDING' },
-      })
-      // TODO(D.5.5 follow-up): enqueue the analyze worker here when the
-      // lightweight internal enqueue helper exists. For now, a human can
-      // hit "Run analysis" after the retype lands.
+      await prisma.contract.update({ where: { id: existing.id }, data: { type: nextType } })
+      await reanalyze()  // best-effort re-analysis; retype still succeeds without a version
       return reply.send({
         ok: true,
         reversible: false,
@@ -2186,10 +2139,10 @@ export async function internalAiRoutes(app: FastifyInstance) {
     }
 
     if (body.action === 're_analyze') {
-      await prisma.contract.update({
-        where: { id: existing.id },
-        data:  { analysisStatus: 'PENDING' },
-      })
+      const queued = await reanalyze()
+      if (!queued) {
+        return reply.status(409).send({ detail: 'Nothing to analyze — this contract has no document to (re)parse yet.' })
+      }
       return reply.send({
         ok: true,
         reversible: false,
@@ -2368,16 +2321,17 @@ export async function internalAiRoutes(app: FastifyInstance) {
       })
     }
 
-    // Normal path — resolve the first approver + create instance + step.
-    const firstApproverId = await resolveApprover(firstStepDef, body.orgId, prisma as never)
-    if (!firstApproverId) {
+    // Normal path — resolve the first approver(s) + create instance + step(s).
+    // Wave 3.8 — a parallel first step fans out to all its approvers at once.
+    const firstApproverIds = await resolveApprovers(firstStepDef, body.orgId, prisma as never)
+    if (firstApproverIds.length === 0) {
       return reply.status(422).send({
         detail: `Cannot resolve approver for step "${firstStepDef.name}"`,
       })
     }
     const escalateAt = new Date(Date.now() + (firstStepDef.dueSoonHours ?? 48) * 60 * 60 * 1000)
 
-    const { inst, step } = await prisma.$transaction(async (tx) => {
+    const { inst, steps } = await prisma.$transaction(async (tx) => {
       const inst = await tx.approvalInstance.create({
         data: {
           orgId: body.orgId,
@@ -2388,33 +2342,39 @@ export async function internalAiRoutes(app: FastifyInstance) {
           submittedById: body.userId,
         },
       })
-      const step = await tx.approvalStep.create({
-        data: {
-          approvalInstanceId: inst.id,
-          orgId: body.orgId,
-          stepOrder: firstStepDef.order,
-          stepName:  firstStepDef.name,
-          approverId: firstApproverId,
-          status: 'PENDING',
-          escalateAt,
-        },
-      })
+      const steps = await Promise.all(firstApproverIds.map(approverId =>
+        tx.approvalStep.create({
+          data: {
+            approvalInstanceId: inst.id,
+            orgId: body.orgId,
+            stepOrder: firstStepDef.order,
+            stepName:  firstStepDef.name,
+            approverId,
+            status: 'PENDING',
+            escalateAt,
+          },
+        }),
+      ))
       await tx.contract.update({
         where: { id: contract.id },
         data:  { status: 'PENDING_APPROVAL' },
       })
-      return { inst, step }
+      return { inst, steps }
     })
 
     return reply.send({
       ok: true,
       reversible: true,
       instanceId: inst.id,
-      stepId: step.id,
+      // Keep the singular fields for backward-compat (first of the batch), plus
+      // the full set for parallel steps.
+      stepId: steps[0].id,
+      stepIds: steps.map(s => s.id),
       contractId: contract.id,
       previousStatus: contract.status,
       workflowDefinitionId: workflow.id,
-      firstApproverId,
+      firstApproverId: firstApproverIds[0],
+      approverIds: firstApproverIds,
       currentStepOrder: firstStepDef.order,
       autoApproved: false,
     })
@@ -2493,145 +2453,20 @@ export async function internalAiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ detail: 'Invalid request', issues: (err as { issues?: unknown }).issues })
     }
 
-    const contract = await prisma.contract.findFirst({
-      where: { id: body.contractId, orgId: body.orgId, deletedAt: null },
-      select: {
-        id: true, title: true, type: true, currentVersionId: true,
-      },
+    // Shared with the user-facing POST /contracts/:id/clauses/:clauseId/apply
+    // so the agent-thread flow and the review drawer splice identically.
+    const applied = await applyClauseProposal({
+      orgId:        body.orgId,
+      userId:       body.userId,
+      contractId:   body.contractId,
+      clauseId:     body.clauseId,
+      proposedText: body.proposedText,
+      aggression:   body.aggression,
+      rationale:    body.rationale,
+      changes:      body.changes,
     })
-    if (!contract) return reply.status(404).send({ detail: 'Contract not found' })
-    if (!contract.currentVersionId) {
-      return reply.status(400).send({ detail: 'Contract has no current version' })
-    }
-    const currentVersion = await prisma.contractVersion.findUnique({
-      where: { id: contract.currentVersionId },
-      select: {
-        id: true, versionNumber: true,
-        htmlContent: true, plainText: true,
-      },
-    })
-    if (!currentVersion) return reply.status(404).send({ detail: 'Current version missing' })
-
-    let clause = await prisma.contractClause.findFirst({
-      where: { id: body.clauseId, versionId: currentVersion.id },
-      select: { id: true, clauseType: true, content: true, sectionRef: true },
-    })
-    // P1.6 — resilience to version churn.
-    //
-    // The UI may hold a clauseId from an earlier version (the editor's
-    // autosave creates new versions without re-running clause extraction,
-    // so the "current" version can have zero clause rows). We cascade:
-    //
-    //   1) Look up by matching (clauseType, sectionRef) on the current
-    //      version — correct when the version has extracted clauses.
-    //   2) Fall back to the prior clause's own data — splice runs against
-    //      version.htmlContent anyway; if the text is still in the HTML
-    //      we replace, else the splice falls through to an amendment note.
-    //
-    // This keeps the user's intent ("apply this redline to the liability
-    // clause") stable across editor autosave churn.
-    if (!clause) {
-      const priorClause = await prisma.contractClause.findFirst({
-        where: { id: body.clauseId },
-        select: { id: true, clauseType: true, content: true, sectionRef: true },
-      })
-      if (priorClause) {
-        const byType = await prisma.contractClause.findFirst({
-          where: {
-            versionId: currentVersion.id,
-            isSubChunk: false,
-            clauseType: priorClause.clauseType,
-            ...(priorClause.sectionRef ? { sectionRef: priorClause.sectionRef } : {}),
-          },
-          orderBy: { sortOrder: 'asc' },
-          select: { id: true, clauseType: true, content: true, sectionRef: true },
-        })
-        // Prefer the current-version row if we found it — its text
-        // matches the current HTML and the splice will hit. Otherwise
-        // use the prior clause; the splice uses .content as the "before"
-        // string, which may or may not still be in the current HTML.
-        clause = byType ?? priorClause
-      }
-    }
-    if (!clause) {
-      return reply.status(404).send({ detail: 'Clause not found on current version' })
-    }
-
-    // Splice: find the clause content verbatim in the HTML/plaintext and
-    // replace. If we can't find it cleanly (content was rewritten after
-    // extraction), append the proposed clause as an addendum instead of
-    // corrupting the doc.
-    const before = clause.content
-    const newParagraph = `<p>${escapeHtml(body.proposedText)}</p>`
-    let nextHtml   = currentVersion.htmlContent
-    let nextPlain  = currentVersion.plainText
-    let spliced = false
-    if (currentVersion.htmlContent.includes(before)) {
-      nextHtml  = currentVersion.htmlContent.replace(before, body.proposedText)
-      spliced = true
-    } else if (currentVersion.htmlContent.includes(escapeHtml(before))) {
-      nextHtml  = currentVersion.htmlContent.replace(escapeHtml(before), escapeHtml(body.proposedText))
-      spliced = true
-    } else {
-      // Fallback — append as an amendment note at the end.
-      nextHtml += `\n<hr/>\n<p><strong>Amendment (via redline_apply):</strong></p>${newParagraph}`
-    }
-    nextPlain = currentVersion.plainText.includes(before)
-      ? currentVersion.plainText.replace(before, body.proposedText)
-      : currentVersion.plainText + '\n\n[Amendment via redline_apply]\n' + body.proposedText
-
-    const nextVersionNumber = currentVersion.versionNumber + 1
-    const aggressionLabel = body.aggression ?? 'custom'
-
-    const newVersion = await prisma.$transaction(async (tx) => {
-      const v = await tx.contractVersion.create({
-        data: {
-          contractId: contract.id,
-          versionNumber: nextVersionNumber,
-          htmlContent: nextHtml,
-          plainText: nextPlain,
-          changeNote: body.rationale
-            ? `redline_apply (${aggressionLabel}): ${body.rationale}`
-            : `redline_apply (${aggressionLabel}) on ${clause.clauseType}`,
-          createdById: body.userId,
-          metadata: {
-            redline: {
-              sourceClauseId: clause.id,
-              clauseType:     clause.clauseType,
-              sectionRef:     clause.sectionRef,
-              originalText:   clause.content,
-              proposedText:   body.proposedText,
-              aggression:     aggressionLabel,
-              rationale:      body.rationale,
-              changes:        body.changes ?? [],
-              spliced,
-              generatedBy:    'redline_apply',
-              appliedAt:      new Date().toISOString(),
-            },
-          },
-        },
-      })
-      await tx.contract.update({
-        where: { id: contract.id },
-        data:  { currentVersionId: v.id },
-      })
-      return v
-    })
-
-    return reply.send({
-      ok:              true,
-      reversible:      true,
-      contractId:      contract.id,
-      previousVersionId: currentVersion.id,
-      newVersionId:    newVersion.id,
-      newVersionNumber: nextVersionNumber,
-      clauseId:        clause.id,
-      spliced,
-      diff: [
-        { field: 'currentVersionId', before: currentVersion.id, after: newVersion.id },
-        { field: 'versionNumber',    before: currentVersion.versionNumber, after: nextVersionNumber },
-      ],
-    })
+    if (!applied.ok) return reply.status(applied.status).send({ detail: applied.detail })
+    return reply.send(applied.data)
   })
 
   // ── POST /internal/ai/tools/redline_apply/undo (P1.5) ──────────────────────
@@ -2765,6 +2600,20 @@ export async function internalAiRoutes(app: FastifyInstance) {
       })
       return { contract, version }
     })
+
+    // Wave 3.2 — index the new draft in ES so it's findable via
+    // portfolio_search / contract_search immediately (mirrors the AI-draft
+    // sibling below). We have the real plainText here. Fire-and-forget.
+    indexContract(created.contract.id, {
+      orgId:            body.orgId,
+      title:            created.contract.title,
+      type:             created.contract.type,
+      status:           created.contract.status,
+      counterpartyName: created.contract.counterpartyName ?? undefined,
+      plainText,
+      tags:             created.contract.tags,
+      createdAt:        created.contract.createdAt.toISOString(),
+    }).catch(() => { /* swallow */ })
 
     return reply.send({
       ok: true,
@@ -3715,14 +3564,6 @@ export async function internalAiRoutes(app: FastifyInstance) {
       matrix,
     })
   })
-}
-
-/** Minimal HTML escape for splicing user-supplied text into contract HTML. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
 }
 
 // Minimal HTML → plaintext helper for storing the generated body as

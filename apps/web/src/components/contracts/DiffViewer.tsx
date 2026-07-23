@@ -4,6 +4,7 @@
  */
 import { useState } from 'react'
 import { ArrowLeftRight, AlignLeft } from 'lucide-react'
+import { sanitizeHtml } from '@/lib/sanitize'
 
 interface DiffStats {
   insertions: number
@@ -58,7 +59,7 @@ export function DiffViewer({ diffHtml, stats, v1Label = 'Original', v2Label = 'C
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div
             className="diff-unified prose prose-sm max-w-none p-6 overflow-auto max-h-[70vh]"
-            dangerouslySetInnerHTML={{ __html: diffHtml }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(diffHtml) }}
           />
         </div>
       ) : (
@@ -69,7 +70,7 @@ export function DiffViewer({ diffHtml, stats, v1Label = 'Original', v2Label = 'C
             </div>
             <div
               className="diff-left prose prose-sm max-w-none p-4 overflow-auto max-h-[65vh]"
-              dangerouslySetInnerHTML={{ __html: diffHtml }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(diffHtml) }}
             />
           </div>
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -78,7 +79,7 @@ export function DiffViewer({ diffHtml, stats, v1Label = 'Original', v2Label = 'C
             </div>
             <div
               className="diff-right prose prose-sm max-w-none p-4 overflow-auto max-h-[65vh]"
-              dangerouslySetInnerHTML={{ __html: diffHtml }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(diffHtml) }}
             />
           </div>
         </div>

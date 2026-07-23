@@ -37,9 +37,7 @@ import { requirePermission } from '../middleware/permissions.js'
 import { createAuditEvent } from '../lib/audit.js'
 import { AuditAction } from '@clm/types'
 import { sendSigningEmailForSigner } from '../lib/signing-email.js'
-import { generateAndStoreSignedPdf } from '../lib/pdf-signing.js'
-import { renderHtmlToPdfAndStore } from '../lib/gotenberg.js'
-import { queueSigningReminder } from '../lib/queue.js'
+import { queueSigningReminder, queueSealSignedPdf } from '../lib/queue.js'
 import { extractObligationsForContract, CostCapExceededError } from '../lib/obligation-extract.js'
 import { fireWebhook } from '../lib/webhook-events.js'
 import { APP_NAME } from '../lib/brand.js'
@@ -59,6 +57,10 @@ const SignersSchema = z.object({
 
 const SignBodySchema = z.object({
   signedName: z.string().min(1).max(200),
+  // Wave 2.7 — explicit ESIGN/UETA consent to conduct business electronically.
+  // Optional for backward-compat with older clients, but recorded in the
+  // signature event so the audit trail shows affirmative consent when present.
+  consent: z.boolean().optional(),
 })
 
 const DeclineBodySchema = z.object({
@@ -145,10 +147,9 @@ export async function signatureRoutes(app: FastifyInstance) {
       })
 
       // Send the signing link email to each signer. For SEQUENTIAL flows
-      // we only email the first-bucket signer initially — others get
-      // notified after their predecessors sign (see /sign/:token/sign
-      // completion handler — TODO when reminders + sequential email
-      // chain land in step 8).
+      // we only email the first-bucket signer initially — later buckets get
+      // notified as their predecessors finish, in the /sign/:token/sign
+      // completion handler (Wave 3.7).
       if (fresh) {
         const orgRow = await prisma.organization.findUnique({
           where: { id: orgId }, select: { name: true },
@@ -417,7 +418,12 @@ export async function signatureRoutes(app: FastifyInstance) {
           signatureRequestId: sr.id,
           signerId: signer.id,
           kind: 'SIGNED',
-          metadata: { signedName: body.signedName },
+          metadata: {
+            signedName: body.signedName,
+            // ESIGN/UETA affirmative consent (Wave 2.7).
+            consentGiven: body.consent === true,
+            consentText: 'Signer agreed to conduct business and sign electronically.',
+          },
           ipAddress: req.ip,
           userAgent: req.headers['user-agent'] ?? null,
         },
@@ -470,88 +476,13 @@ export async function signatureRoutes(app: FastifyInstance) {
         })
 
         // ── PDF binding (Step 6) ───────────────────────────────────
-        // Pull the canonical PDF for the signed version (renderedPdfKey
-        // wins per A.5; falls back to the original upload's s3Key).
-        // pdf-lib appends a signature certificate page; the result is
-        // uploaded under signed/<contractId>/<srId>.pdf and saved as a
-        // new ContractVersion (versionNumber++) which becomes the
-        // canonical for the contract going forward.
-        ;(async () => {
-          try {
-            const ver = await prisma.contractVersion.findUnique({
-              where: { id: sr.versionId },
-              select: { id: true, versionNumber: true, s3Key: true, renderedPdfKey: true, plainText: true, htmlContent: true },
-            })
-            if (!ver) return
-            let sourceKey = ver.renderedPdfKey ?? ver.s3Key
-            // If neither exists (common for AI-drafted HTML contracts that
-            // never went through the editor's render-on-save path), render
-            // via Gotenberg now from the HTML so we have something to stamp.
-            if (!sourceKey && ver.htmlContent?.trim()) {
-              try {
-                const { s3Key: rk } = await renderHtmlToPdfAndStore({
-                  html: ver.htmlContent,
-                  keyPrefix: `${sr.orgId}/contracts/${sr.contractId}/rendered`,
-                })
-                await prisma.contractVersion.update({
-                  where: { id: ver.id },
-                  data: { renderedPdfKey: rk, renderedAt: new Date() },
-                })
-                sourceKey = rk
-              } catch (err) {
-                app.log.warn({ srId: sr.id, err: (err as Error).message }, 'pdf-signing: failed to render HTML→PDF')
-              }
-            }
-            if (!sourceKey) {
-              app.log.warn({ srId: sr.id }, 'pdf-signing: no source PDF for version — skipped certificate generation')
-              return
-            }
-            const cMeta = await prisma.contract.findUnique({
-              where: { id: sr.contractId },
-              select: { title: true, type: true, org: { select: { name: true } } },
-            })
-            if (!cMeta) return
-            const { signedKey } = await generateAndStoreSignedPdf({
-              sourceKey,
-              signedKeyPrefix: `signed/${sr.contractId}`,
-              contractTitle: cMeta.title,
-              contractType: cMeta.type,
-              orgName: cMeta.org?.name ?? APP_NAME,
-              signatureRequestId: sr.id,
-              completedAt,
-              signers: fresh!.signers
-                .map(s => ({
-                  name: s.name, role: s.role, email: s.email,
-                  signedName: s.signedName, signedAt: s.signedAt,
-                  signedIp: s.signedIp, signOrder: s.signOrder,
-                }))
-                .sort((a, b) => (a.signOrder - b.signOrder) || ((a.signedAt?.getTime() ?? 0) - (b.signedAt?.getTime() ?? 0))),
-            })
-
-            const nextVersionNumber = (ver.versionNumber ?? 0) + 1
-            const newVersion = await prisma.contractVersion.create({
-              data: {
-                contractId: sr.contractId,
-                versionNumber: nextVersionNumber,
-                htmlContent: ver.htmlContent ?? '',
-                plainText: ver.plainText ?? '',
-                s3Key: signedKey,
-                mimeType: 'application/pdf',
-                changeNote: `Signed by ${fresh!.signers.length} signer${fresh!.signers.length === 1 ? '' : 's'} (signature certificate appended)`,
-                createdById: sr.createdById,
-              },
-            })
-            await prisma.contract.update({
-              where: { id: sr.contractId },
-              data: { currentVersionId: newVersion.id },
-            })
-            app.log.info({ srId: sr.id, signedKey, versionId: newVersion.id }, 'pdf-signing: signed PDF stored')
-          } catch (err) {
-            // Don't fail the signing call — the legal record exists in
-            // the audit trail + Signer rows even without a stamped PDF.
-            app.log.warn({ err: (err as Error).message, srId: sr.id }, 'pdf-signing: failed to generate certificate')
-          }
-        })().catch(() => { /* swallow */ })
+        // Queue the seal rather than doing it inline. The signed PDF is a
+        // legally significant artefact, so it must survive a transient S3 /
+        // Gotenberg / signing-cert failure: this used to be a fire-and-forget
+        // IIFE with swallowed errors, which could leave the contract EXECUTED
+        // with no sealed document and no way to recover. The worker re-reads
+        // state and is idempotent, so retries are safe.
+        queueSealSignedPdf({ signatureRequestId: sr.id })
 
         // ── P8 Step 2: auto-extract obligations on signature completion ──
         // Fire-and-forget — the signed contract becomes the system of
@@ -581,6 +512,49 @@ export async function signatureRoutes(app: FastifyInstance) {
             }
           }
         })().catch(() => { /* swallow */ })
+      } else if (sr.signOrder === 'SEQUENTIAL') {
+        // Wave 3.7 — sequential flow, not everyone has signed yet. If this
+        // signature just unblocked a later signOrder bucket, email those signers
+        // now instead of making them wait for a T-3d/T-1d reminder job. Mirrors
+        // the initial-send loop and the reminder worker's bucket selection.
+        const pending = fresh!.signers.filter(s => s.status === 'PENDING')
+        if (pending.length > 0) {
+          const minOrder = Math.min(...pending.map(s => s.signOrder))
+          // Only notify when this sign advanced the sequence to a NEW bucket —
+          // guards against re-emailing parallel siblings still pending in the
+          // current signer's own bucket (they were emailed when that bucket
+          // opened).
+          if (minOrder > signer.signOrder) {
+            const nextBucket = pending.filter(s => s.signOrder === minOrder)
+            const cMeta = await prisma.contract.findUnique({
+              where: { id: sr.contractId },
+              select: { title: true, type: true, org: { select: { name: true } } },
+            })
+            const sender = await prisma.user.findUnique({
+              where: { id: sr.createdById }, select: { name: true },
+            })
+            const baseUrl = process.env.WEB_BASE_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:5173'
+            for (const s of nextBucket) {
+              sendSigningEmailForSigner({
+                signer: s,
+                baseUrl,
+                senderName: sender?.name ?? null,
+                orgName: cMeta?.org?.name ?? APP_NAME,
+                contractTitle: cMeta?.title ?? 'Contract',
+                contractType: cMeta?.type ?? '',
+                message: sr.message,
+                expiresAt: sr.expiresAt,
+              })
+            }
+            await prisma.signatureEvent.create({
+              data: {
+                signatureRequestId: sr.id,
+                kind: 'SENT',
+                metadata: { sequentialAdvance: true, notified: nextBucket.length, signOrder: minOrder },
+              },
+            }).catch(() => { /* audit best-effort */ })
+          }
+        }
       }
 
       return reply.send({

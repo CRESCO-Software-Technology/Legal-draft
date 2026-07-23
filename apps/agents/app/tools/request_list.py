@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 class RequestListArgs(BaseModel):
     status:         str | None = Field(
         None,
-        description="Filter by request status (SUBMITTED | IN_REVIEW | APPROVED | REJECTED | CANCELLED | COMPLETED).",
+        description="Filter by request status (SUBMITTED | IN_REVIEW | ACCEPTED | REJECTED | MORE_INFO_NEEDED | COMPLETED).",
     )
     assigned_to_id: str | None = Field(None, description="Filter by assigned user id.")
     priority:       str | None = Field(None, description="LOW | MEDIUM | HIGH | URGENT.")

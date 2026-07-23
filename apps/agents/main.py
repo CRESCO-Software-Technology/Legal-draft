@@ -13,6 +13,7 @@ from app.routes import draft
 from app.routes import assist
 from app.routes import extract
 from app.routes import redline
+from app.routes import playbook_review
 from app.routes import approval
 from app.routes import obligations
 from app.routes import renewals
@@ -73,6 +74,7 @@ app.include_router(draft.router)
 app.include_router(assist.router)
 app.include_router(extract.router)
 app.include_router(redline.router)
+app.include_router(playbook_review.router)
 app.include_router(approval.router)
 app.include_router(obligations.router)
 app.include_router(renewals.router)

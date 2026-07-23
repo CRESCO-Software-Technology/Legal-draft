@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { prisma } from '../lib/prisma.js'
 import { requirePermission } from '../middleware/permissions.js'
@@ -6,6 +7,7 @@ import { createAuditEvent } from '../lib/audit.js'
 import { s3, S3_BUCKET } from '../lib/storage.js'
 import { CreateRequestSchema, UpdateRequestSchema, AuditAction } from '@clm/types'
 import { queueClassifyRequest, queueParseDocument, queueDraftContract } from '../lib/queue.js'
+import { indexContract } from '../lib/elasticsearch.js'
 
 const ALLOWED_MIME = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
 
@@ -157,9 +159,9 @@ export async function requestRoutes(app: FastifyInstance) {
         orgId,
         requestedById,
         requestNumber,
-        metadata,
+        metadata: metadata as Prisma.InputJsonValue,
         attachments: attachments.length > 0 ? attachments : undefined,
-      },
+      } as Prisma.ContractRequestUncheckedCreateInput,
     })
 
     // Rename S3 key to use real request ID (for clean paths)
@@ -255,10 +257,13 @@ export async function requestRoutes(app: FastifyInstance) {
     // Draft context — stored in metadata so retry can re-queue without the original request
     const draftContext = !hasAttachments ? {
       requestTitle:      request.title,
-      requestDescription: (reqMeta.description as string) ?? request.title,
+      // `description` is a top-level column on ContractRequest (not in metadata);
+      // read it first so the AI drafts from the requester's actual ask, not just
+      // the title. Fall back to legacy metadata, then title, to stay defensive.
+      requestDescription: request.description ?? (reqMeta.description as string) ?? request.title,
       contractType:      request.type,
       counterpartyName:  request.counterpartyName ?? undefined,
-      estimatedValue:    request.estimatedValue ?? undefined,
+      estimatedValue:    request.estimatedValue != null ? Number(request.estimatedValue) : undefined,
     } : undefined
 
     // Create the contract from request data
@@ -285,7 +290,9 @@ export async function requestRoutes(app: FastifyInstance) {
           versionNumber: 1,
           s3Key:         att.s3Key,
           mimeType:      att.mimeType,
-          filename:      att.filename,
+          createdById:   userId,
+          // ContractVersion has no `filename` column; the name travels
+          // with the parse job below and is derived from s3Key for display.
         },
       })
       queueParseDocument({
@@ -305,6 +312,20 @@ export async function requestRoutes(app: FastifyInstance) {
         ...draftContext!,
       })
     }
+
+    // Index into ES so the new contract is searchable immediately. plainText is
+    // empty for now; the attachment path re-indexes with full text once parsing
+    // finishes (see parse.worker.ts). Fire-and-forget — never block the response.
+    indexContract(contract.id, {
+      orgId,
+      title:            contract.title,
+      type:             contract.type,
+      status:           contract.status,
+      counterpartyName: contract.counterpartyName ?? undefined,
+      plainText:        '',
+      tags:             contract.tags,
+      createdAt:        contract.createdAt.toISOString(),
+    }).catch(err => req.log.warn({ err }, 'ES index on request-convert failed'))
 
     // Mark request as accepted
     await prisma.contractRequest.update({

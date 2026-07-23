@@ -1,4 +1,5 @@
 import Fastify from 'fastify'
+import type { FastifyRequest } from 'fastify'
 import pino from 'pino'
 import pinoPretty from 'pino-pretty'
 import cors from '@fastify/cors'
@@ -13,7 +14,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { FastifyAdapter } from '@bull-board/fastify'
 
 import { redis } from './lib/redis.js'
-import { documentQueue, agentQueue, notificationQueue, scanQueue, webhookQueue } from './lib/queue.js'
+import { documentQueue, agentQueue, notificationQueue, scanQueue, webhookQueue, signingQueue } from './lib/queue.js'
 import { ensureContractIndex } from './lib/elasticsearch.js'
 import { ensureBucket } from './lib/storage.js'
 import { authRoutes } from './routes/auth.js'
@@ -58,7 +59,7 @@ import { marketingRoutes } from './routes/marketing.js'
 import { slackRoutes } from './routes/slack.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { assertRouterConfigured } from './lib/aiRouter.js'
-import { assertProductionSecrets } from './lib/security-config.js'
+import { assertSecretsConfigured } from './lib/secrets.js'
 
 function devLogger() {
   const stream = pinoPretty({ colorize: true })
@@ -160,17 +161,27 @@ export async function buildApp() {
   // Global rate limit. Production: 1000/min/IP. Dev/test: 10× so the
   // 48-probe audit can run back-to-back without tripping the cap;
   // production behavior is unchanged.
-  await app.register(rateLimit, {
+  // `rateLimit as any`: @hocuspocus/server pulls a second Fastify (v5)
+  // copy alongside apps/api's v4, so @fastify/rate-limit's plugin
+  // signature type-mismatches the host FastifyInstance. Runtime is correct
+  // (v4 plugin + v4 instance); the cast sidesteps the dual-version type
+  // skew. `skip`'s req is typed explicitly to keep that callback safe.
+  await app.register(rateLimit as any, {
     redis,
     max: process.env.NODE_ENV === 'production' ? 1000 : 10_000,
     timeWindow: '1 minute',
-    keyGenerator: (req) =>
-      (req.headers['x-org-id'] as string) ?? req.ip,
+    // Wave 1.4 (2026-07): key the global limiter on the client IP, NOT
+    // the attacker-controlled `x-org-id` header. The header is only
+    // meaningful on internal-secret-authenticated calls; using it as the
+    // key let any unauthenticated caller rotate values for a fresh
+    // 1000/min bucket, defeating the cap on every public surface.
+    // (Default keyGenerator = req.ip.) Per-org authenticated limits, if
+    // needed, belong on a post-auth limiter that reads req.user.orgId.
     // Trusted-internal bypass: probes / scripts can pass the same
     // INTERNAL_SERVICE_SECRET we already use elsewhere to skip the
-    // global cap (the per-route limits — login, register, etc — still
-    // apply). Externally-issued requests can never set this.
-    skip: (req) => {
+    // global cap (the per-route limits — login, register — still apply).
+    // Externally-issued requests can never set this.
+    skip: (req: FastifyRequest) => {
       const s = req.headers['x-internal-secret']
       return !!s && s === process.env.INTERNAL_SERVICE_SECRET
     },
@@ -184,7 +195,10 @@ export async function buildApp() {
   const bullBoardAdapter = new FastifyAdapter()
   bullBoardAdapter.setBasePath('/admin/queues')
   createBullBoard({
-    queues: [new BullMQAdapter(documentQueue), new BullMQAdapter(agentQueue), new BullMQAdapter(notificationQueue), new BullMQAdapter(scanQueue), new BullMQAdapter(webhookQueue)],
+    // @bull-board v5 + bullmq v5 have benign generic-type friction on the
+    // BullMQAdapter → BaseAdapter assignment; the imports are already
+    // untyped (@ts-ignore above). Runtime is correct.
+    queues: [new BullMQAdapter(documentQueue), new BullMQAdapter(agentQueue), new BullMQAdapter(notificationQueue), new BullMQAdapter(scanQueue), new BullMQAdapter(webhookQueue), new BullMQAdapter(signingQueue)] as any,
     serverAdapter: bullBoardAdapter,
   })
   app.addHook('onRequest', async (req, reply) => {
@@ -256,11 +270,15 @@ export async function buildApp() {
   // by the org's Slack signing secret rather than a user JWT).
   await app.register(slackRoutes,          { prefix: '/api/v1/slack' })
 
-  // Refuse to boot in production with dev/placeholder secrets.
-  assertProductionSecrets()
+  // Wave 1.1 — fail closed at boot if JWT_SECRET / PORTAL_JWT_SECRET /
+  // INTERNAL_SERVICE_SECRET are missing or a known-insecure placeholder in
+  // production (no more silent hardcoded-secret fallback). In dev, generates
+  // + persists a local secret.
+  assertSecretsConfigured()
 
-  // D.0.3 — log the platform routing table at boot; throws if a critical
-  // tier (default, fast) has no platform key set.
+  // D.0.3 — log the platform routing table at boot. Wave 0.4: warns (no
+  // longer throws) when a critical tier has no platform key, so the app
+  // boots keyless and AI features 503-degrade.
   assertRouterConfigured()
 
   // Elasticsearch index bootstrap (non-blocking — ES may not be running locally)

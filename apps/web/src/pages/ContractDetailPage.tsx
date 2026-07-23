@@ -2423,6 +2423,11 @@ export function ContractDetailPage() {
           const rawHtml = latest?.htmlContent?.trim()
             ? latest.htmlContent
             : latest?.plainText?.trim() || ''
+          // A freshly-seeded amendment/draft carries markup-only content like
+          // '<p></p>' — truthy, but with no real text. Strip tags before deciding
+          // emptiness; otherwise the Styled view mounts a blank editor and paints
+          // an empty white page instead of the empty-state card.
+          const hasText = rawHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim().length > 0
           const analyzing = [
             'PENDING', 'PARSING', 'CLASSIFYING', 'EXTRACTING',
             'INDEXING', 'ANALYZING', 'DRAFTING',
@@ -2435,9 +2440,12 @@ export function ContractDetailPage() {
               reason: contract.analysisError ?? undefined,
               onReanalyze: () => reprocess.mutate(),
             }
-          } else if (analyzing && !rawHtml) {
+          } else if (analyzing && !hasText) {
             canvasState = { kind: 'loading' }
-          } else if (!rawHtml) {
+          } else if (!hasText && !isEditing) {
+            // Effectively-empty in view mode → graceful empty state. In edit mode
+            // we fall through to 'ready' so the editable canvas still mounts and
+            // the user can start typing the amendment.
             canvasState = { kind: 'empty' }
           } else {
             canvasState = { kind: 'ready', html: rawHtml }
@@ -2737,6 +2745,7 @@ export function ContractDetailPage() {
         if (focusedClauseId && focusedIdx >= 0) {
           return (
             <FocusedReviewDrawer
+              contractId={id!}
               clauses={riskyClauses}
               currentIndex={focusedIdx}
               reviewStates={reviewStates}
@@ -3468,9 +3477,17 @@ export function ContractDetailPage() {
                 </div>
                 <button
                   onClick={() => {
-                    // Scroll to an inline approval card below the document, or open a drawer.
-                    // For now, keep the click hint; full approval UX is a follow-up.
-                    window.alert('Approval action — inline approval card to be wired in a follow-up commit.')
+                    // Wave 2.3 — scroll to the real DecisionStrip (Approve /
+                    // Reject / Delegate) that renders above the document when
+                    // the current user is the pending approver. Falls back to
+                    // the Approvals tab's ApprovalCard if the strip isn't
+                    // mounted. (Replaces the window.alert placeholder.)
+                    const strip = document.getElementById('approval-decision-strip')
+                    if (strip) {
+                      strip.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    } else {
+                      setTab('approval')
+                    }
                   }}
                   className="w-full text-center py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
                 >

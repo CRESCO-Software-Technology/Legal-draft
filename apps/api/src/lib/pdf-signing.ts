@@ -13,13 +13,17 @@
  *   2. Creates a new ContractVersion (versionNumber++) pointing at it
  *   3. Updates Contract.currentVersionId → that new version
  *
- * No X.509 / PAdES yet — that's a V1.5 follow-up. For now the legal
- * record is: typed-name signature + IP + UA + timestamp, anchored in
- * the audit_events table AND visually present on the certificate page.
+ * Wave 2.7 (2026-07): the final PDF is now sealed with a real PAdES/X.509
+ * cryptographic signature (see lib/pades-signing.ts) and its SHA-256 hash is
+ * recorded in audit_events, so the executed document is tamper-evident — any
+ * later byte change invalidates the signature. The per-signer legal record
+ * (typed name + IP + UA + timestamp) remains, both in audit_events and visible
+ * on the certificate page.
  */
 import { PDFDocument, StandardFonts, rgb, PageSizes } from 'pdf-lib'
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { s3, S3_BUCKET } from './storage.js'
+import { signPdfWithPades } from './pades-signing.js'
 
 interface SignerForCertificate {
   name: string
@@ -158,7 +162,9 @@ export async function appendSignatureCertificate(args: AppendCertificateArgs): P
   // Footer
   page.drawText(
     'This certificate is generated automatically when all required signatures are collected. ' +
-    'Each signer\'s typed name, IP address, and timestamp constitute the legal record of consent.',
+    'Each signer\'s typed name, IP address, and timestamp constitute the legal record of consent. ' +
+    'The completed document is sealed with a PAdES/X.509 digital signature (SHA-256); any ' +
+    'modification after signing invalidates it.',
     {
       x: margin, y: 40, font: helv, size: 7,
       color: rgb(0.55, 0.55, 0.55),
@@ -166,7 +172,7 @@ export async function appendSignatureCertificate(args: AppendCertificateArgs): P
       lineHeight: 10,
     },
   )
-  page.drawText(`Generated ${new Date().toISOString()} · powered by pdf-lib`, {
+  page.drawText(`Generated ${new Date().toISOString()} · sealed with PAdES/X.509 (SHA-256)`, {
     x: margin, y: 22, font: helv, size: 7, color: rgb(0.7, 0.7, 0.7),
   })
 
@@ -193,7 +199,7 @@ export async function generateAndStoreSignedPdf({
   signatureRequestId: string
   signers: SignerForCertificate[]
   completedAt: Date
-}): Promise<{ signedKey: string; sizeBytes: number }> {
+}): Promise<{ signedKey: string; sizeBytes: number; documentHash: string }> {
   // 1. Pull the source bytes from S3
   const obj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: sourceKey }))
   if (!obj.Body) throw new Error(`pdf-signing: source ${sourceKey} not found`)
@@ -202,27 +208,37 @@ export async function generateAndStoreSignedPdf({
   for await (const chunk of obj.Body as AsyncIterable<Buffer>) chunks.push(chunk)
   const sourceBytes = Buffer.concat(chunks)
 
-  // 2. Append cert
-  const signedBytes = await appendSignatureCertificate({
+  // 2. Append the human-readable certificate page
+  const certBytes = await appendSignatureCertificate({
     sourcePdfBytes: sourceBytes,
     contractTitle, contractType, orgName,
     signatureRequestId, signers, completedAt,
   })
 
-  // 3. Upload the signed PDF
+  // 3. Wave 2.7 — apply a real PAdES/X.509 cryptographic signature over the
+  //    whole document. Any later byte change invalidates it, so the signed PDF
+  //    is tamper-evident (not just a cosmetic cert page). The returned hash is
+  //    stored in audit_events so the record is independently verifiable.
+  const { signedPdf, sha256 } = await signPdfWithPades(certBytes, {
+    reason: `Executed via ${orgName} — signature request ${signatureRequestId}`,
+    name: `${orgName} (via Signing Authority)`,
+  })
+
+  // 4. Upload the signed PDF
   const signedKey = `${signedKeyPrefix.replace(/\/$/, '')}/${signatureRequestId}.pdf`
   // S3 user-defined metadata only allows ASCII — strip non-ASCII chars
   // (em-dashes, smart quotes, etc.) so unicode contract titles don't
   // fail the upload with "Invalid character in header content".
   const ascii = (s: string) => s.replace(/[^\x20-\x7E]/g, '').slice(0, 200)
   await s3.send(new PutObjectCommand({
-    Bucket: S3_BUCKET, Key: signedKey, Body: Buffer.from(signedBytes),
+    Bucket: S3_BUCKET, Key: signedKey, Body: signedPdf,
     ContentType: 'application/pdf',
     Metadata: {
       contractTitle: ascii(contractTitle),
       signatureRequestId,
       signedAt: completedAt.toISOString(),
+      sha256,
     },
   }))
-  return { signedKey, sizeBytes: signedBytes.length }
+  return { signedKey, sizeBytes: signedPdf.length, documentHash: sha256 }
 }

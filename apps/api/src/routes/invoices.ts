@@ -76,36 +76,38 @@ async function autoMatchInvoice(orgId: string, invoice: {
     let score = 0
     const reasons: string[] = []
 
-    // 1. Vendor / counterparty similarity (0.45 max)
+    // 1. Vendor / counterparty similarity (0.40 max)
+    // Weights rebalanced in Wave 3.4 to make room for the amount signal (5)
+    // without pushing the max total above 1.0.
     const counterL = (o.contract.counterpartyName ?? '').toLowerCase().trim()
     if (counterL && vendorL) {
       if (counterL === vendorL) {
-        score += 0.45
+        score += 0.40
         reasons.push('exact counterparty match')
       } else if (counterL.includes(vendorL) || vendorL.includes(counterL)) {
-        score += 0.30
+        score += 0.27
         reasons.push('partial counterparty match')
       } else {
         const tokens = vendorL.split(/\s+/).filter(t => t.length > 2)
         const hit = tokens.some(t => counterL.includes(t))
         if (hit) {
-          score += 0.15
+          score += 0.13
           reasons.push('keyword counterparty match')
         }
       }
     }
 
-    // 2. Due-date proximity to invoice date (0.30 max)
+    // 2. Due-date proximity to invoice date (0.25 max)
     if (o.dueDate) {
       const diff = Math.abs(o.dueDate.getTime() - invoice.invoiceDate.getTime())
       if (diff < 7 * 24 * 60 * 60 * 1000) {
-        score += 0.30
+        score += 0.25
         reasons.push('dueDate within 7d of invoiceDate')
       } else if (diff < 30 * 24 * 60 * 60 * 1000) {
-        score += 0.18
+        score += 0.15
         reasons.push('dueDate within 30d of invoiceDate')
       } else if (diff < tWindow) {
-        score += 0.08
+        score += 0.07
         reasons.push('dueDate within 60d of invoiceDate')
       }
     } else {
@@ -137,6 +139,35 @@ async function autoMatchInvoice(orgId: string, invoice: {
         reasons.push('weak description match')
       }
     }
+
+    // 5. Amount proximity to contract value (0.15 max) — Wave 3.4.
+    // The schema has no per-obligation amount, so contract.value (the total)
+    // is the only amount reference. It's coarse, but a large gap is a strong
+    // signal the invoice belongs to a different contract entirely — which is
+    // exactly the $5-vs-$500k confusion this fixes. Prisma Decimal → Number.
+    if (o.contract.value != null) {
+      const contractValue = Number(o.contract.value.toString())
+      if (contractValue > 0 && invoice.amount > 0) {
+        const rel = Math.abs(invoice.amount - contractValue) / contractValue
+        if (rel <= 0.02) {          // within 2%
+          score += 0.15
+          reasons.push('amount matches contract value')
+        } else if (rel <= 0.10) {   // within 10%
+          score += 0.10
+          reasons.push('amount within 10% of contract value')
+        } else if (rel <= 0.50) {   // within 50% (installment / partial)
+          score += 0.05
+          reasons.push('amount within 50% of contract value')
+        } else if (rel >= 5) {      // off by >5× — almost certainly the wrong contract
+          score -= 0.15
+          reasons.push('amount grossly mismatched (penalty)')
+        }
+      }
+    }
+
+    // Keep the score in [0,1] after the rebalance + possible penalty, so it
+    // matches the persisted matchScore (Float 0..1) and the 0.4 threshold.
+    score = Math.max(0, Math.min(1, score))
 
     if (score > 0 && (!best || score > best.score)) {
       best = {

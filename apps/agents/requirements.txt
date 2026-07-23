@@ -18,6 +18,12 @@ httpx>=0.27.0
 sse-starlette>=2.1.0
 python-multipart>=0.0.9
 pymupdf>=1.24.0
+# Wave 4 — scanned-PDF OCR on Linux/prod. pytesseract drives the tesseract-ocr
+# binary (installed in the agents Docker image); Pillow renders PDF pages to
+# images. macOS dev additionally uses ocrmac (Apple Vision), which is optional
+# and intentionally not pinned here.
+Pillow>=10.0.0
+pytesseract>=0.3.10
 # D.0.7 — LLM observability. CallbackHandler integrates with LangChain 0.3
 # and captures prompts, tool calls, token counts, latency, cost per trace.
 langfuse>=2.55.0

@@ -3,11 +3,14 @@
 # Cloud Run image for apps/api.
 #
 # Why tsx at runtime rather than `tsc → node dist/`?
-# The project has several long-standing strict-mode TypeScript errors (a missing
-# optional `nodemailer` dep, a Prisma JSON null mismatch, and a pnpm dual-resolve
-# of ioredis). `pnpm dev` already runs the source through `tsx`, so this image
-# matches the dev path one-to-one. Switch to a tsc-compiled build later once those
-# upstream type errors are cleaned up; this Dockerfile will still work.
+# As of Wave 0.3 (2026-07) `pnpm --filter api build` compiles cleanly (the old
+# nodemailer / Prisma-JSON / ioredis type errors are fixed and typecheck is green
+# in CI). The remaining blocker to a compiled image is packaging: `@clm/types`
+# still resolves its `main`/`exports` to `src/index.ts`, so `node dist/index.js`
+# would import TypeScript at runtime. Switching to a compiled build is tracked in
+# Wave 4 (deployment) — it needs `@clm/types` to emit JS + conditional exports,
+# then a Docker-build smoke test. Until then, `tsx` matches the `pnpm dev` path
+# one-to-one and is a supported way to run TS on Cloud Run.
 
 # ---------- deps stage ----------
 FROM node:20-slim AS deps

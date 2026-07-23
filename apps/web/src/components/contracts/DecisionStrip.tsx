@@ -116,6 +116,7 @@ export function DecisionStrip({
 
   return (
     <div
+      id="approval-decision-strip"
       role="region"
       aria-label="Approval decision strip"
       className="border-b border-amber-200 bg-gradient-to-r from-amber-50 to-amber-50/40"

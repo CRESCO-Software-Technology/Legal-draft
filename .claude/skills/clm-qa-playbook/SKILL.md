@@ -5,6 +5,15 @@ description: How we QA the draftLegal CLM platform end-to-end — Playwright scr
 
 # CLM QA Playbook
 
+> ⚠️ **Status note (2026-07):** the `scripts/feature-integrity/` probe suite
+> (P1–P84) described below **does not currently exist in the repo** — it was
+> never committed / lost in the open-source export. `package.json` and CI no
+> longer reference it. Layer 2 is therefore the *target* methodology; a real,
+> honest integration suite is being rebuilt in **Wave 5** of the "make it real"
+> program. Until then, treat the P-numbered probes as a design to re-create,
+> not files you can run. The Layer 1 screenshot tour and the ad-hoc
+> `scripts/*-verify.mjs` scripts do exist (but hit a live localhost stack).
+
 This skill encodes how we actually do QA in the `draft-legal` repo. It's the methodology — not a one-time script. Use it when the user asks to test, audit, verify, or QA anything in this codebase.
 
 The methodology has five layers. Use as many as the situation demands; do not skip layer 4 (real-bug discipline) and layer 5 (tracking) — those are non-negotiable.

@@ -1095,8 +1095,23 @@ export function AgentHomePage() {
                 navigate(action.href)
                 return
               }
-              // For now, log + close; real wiring per-tool in U.6.x
-              console.log('[artifact] action:', action.id, action.tool, action.args)
+              // Wave 2.5 — non-href artifact actions carry a write tool; fire it
+              // through the real apply endpoint (server enforces org + the
+              // write-tool allowlist). Throwing on failure lets ActionButton
+              // render its error state instead of the old console.log no-op that
+              // silently did nothing while looking clickable.
+              if (!threadId) throw new Error('No active conversation — send a message first, then apply.')
+              if (!action.tool) throw new Error('This action has nothing to apply.')
+              const r = await fetch(`/api/v1/agent/threads/${threadId}/actions/apply`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken ?? ''}` },
+                body: JSON.stringify({ toolName: action.tool, args: action.args ?? {} }),
+              })
+              const body = await r.json().catch(() => ({}))
+              if (!r.ok || body.ok === false) {
+                throw new Error(body?.detail ?? body?.error?.detail ?? `Apply failed (HTTP ${r.status})`)
+              }
+              qc.invalidateQueries()
             }}
           />
         )

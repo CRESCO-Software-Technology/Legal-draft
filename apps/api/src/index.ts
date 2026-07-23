@@ -1,9 +1,17 @@
 import { buildApp } from './app.js'
-import './workers/index.js'  // start BullMQ workers
 import { startCollabServer } from './lib/collab-server.js'
 
 const PORT = Number(process.env.PORT ?? 3001)
 const HOST = process.env.HOST ?? '0.0.0.0'
+
+// Wave 4 — workers run in-process by default (dev + single-process deploys). In
+// prod a dedicated always-on worker service (worker-entrypoint.ts) runs them
+// and the scale-to-zero API sets WORKERS_ENABLED=false, so time-based jobs
+// (escalation, signature reminders, renewal scans) actually fire and jobs
+// aren't double-consumed.
+if (process.env.WORKERS_ENABLED !== 'false') {
+  await import('./workers/index.js')
+}
 
 const app = await buildApp()
 

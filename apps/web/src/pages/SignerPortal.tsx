@@ -48,6 +48,7 @@ export function SignerPortal() {
   const { token } = useParams<{ token: string }>()
   const [showSignDialog, setShowSignDialog] = useState(false)
   const [signedName, setSignedName] = useState('')
+  const [consent, setConsent] = useState(false)
   const [confirmation, setConfirmation] = useState<'signed' | 'declined' | null>(null)
 
   const { data, isLoading, isError, error } = useQuery({
@@ -62,7 +63,7 @@ export function SignerPortal() {
   })
 
   const sign = useMutation({
-    mutationFn: () => axios.post(`/api/v1/sign/${token}/sign`, { signedName }),
+    mutationFn: () => axios.post(`/api/v1/sign/${token}/sign`, { signedName, consent }),
     onSuccess: () => {
       // Do NOT refetch — once signing completes the request flips to
       // COMPLETED on the backend and GET /sign/:token returns 410. The
@@ -277,6 +278,21 @@ export function SignerPortal() {
               className="w-full h-10 text-sm border border-gray-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
               autoFocus
             />
+            {/* Wave 2.7 — explicit ESIGN/UETA consent, required before signing. */}
+            <label className="mt-4 flex items-start gap-2 text-xs text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                data-testid="signer-consent"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500/40"
+              />
+              <span>
+                I agree to conduct this transaction and sign electronically. I understand my
+                electronic signature is legally binding, and that the document will be sealed
+                with a tamper-evident digital signature.
+              </span>
+            </label>
             {sign.isError && (
               <p className="mt-2 text-xs text-red-600">
                 {(sign.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Failed to record signature.'}
@@ -291,7 +307,7 @@ export function SignerPortal() {
               </button>
               <button
                 onClick={() => sign.mutate()}
-                disabled={!signedName.trim() || sign.isPending}
+                disabled={!signedName.trim() || !consent || sign.isPending}
                 data-testid="signer-confirm-btn"
                 className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >

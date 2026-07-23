@@ -48,9 +48,7 @@ export function sendSigningEmail(args: SendSigningEmailArgs): void {
   const text = renderTextBody(args)
   const html = renderHtmlBody(args)
 
-  // @ts-expect-error nodemailer is an optional dep — lazy-loaded; same
-  // pattern as notification.worker.ts. Type stubs not installed.
-  import('nodemailer').then((nodemailer: { createTransport: (opts: Record<string, unknown>) => { sendMail: (m: Record<string, unknown>) => Promise<unknown> } }) => {
+  import('nodemailer').then((nodemailer) => {
     const transporter = nodemailer.createTransport({
       host:   process.env.SMTP_HOST,
       port:   parseInt(process.env.SMTP_PORT ?? '587', 10),
@@ -61,7 +59,7 @@ export function sendSigningEmail(args: SendSigningEmailArgs): void {
       } : undefined,
     })
     return transporter.sendMail({
-      from: process.env.SMTP_FROM ?? `${args.orgName} <noreply@clm.app>`,
+      from: process.env.SMTP_FROM ?? process.env.EMAIL_FROM ?? `${args.orgName} <noreply@clm.app>`,
       to:   args.to,
       subject,
       text,

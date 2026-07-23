@@ -34,8 +34,11 @@ export function requirePermission(action: string, resource: string) {
       return
     }
 
+    // Wave 1.2 — public-API-key requests carry pre-resolved permissions from
+    // their scopes; evaluate those directly (no role lookup). Empty scopes →
+    // empty permissions → denied.
     const { orgId, roles } = req.user
-    const permissions = await getPermissionsForRoles(orgId, roles)
+    const permissions = req.user.apiPermissions ?? await getPermissionsForRoles(orgId, roles)
     const result = evaluatePermission(permissions, action, resource)
 
     if (!result.granted) {
